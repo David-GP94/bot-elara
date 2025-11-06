@@ -1,0 +1,57 @@
+# src/main/resources/application.yml
+
+server:
+  port: 8080
+
+spring:
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:sandbox}
+
+  datasource:
+    url: jdbc:sqlserver://sqlserver:1433;databaseName=master;encrypt=true;trustServerCertificate=true;
+    username: sa
+    password: ${DB_PASSWO
+    driver-class-name: com.microsoft.sqlserver.jdbc.SQLServerDriver
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+    database-platform: org.hibernate.dialect.SQLServerDialect
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: UTC
+
+logging:
+  level:
+    com.bot.elara: DEBUG
+    org.hibernate.SQL: DEBUG
+    org.hibernate.type.descriptor.sql: TRACE
+
+---
+# PERFIL: SANDBOX (Pruebas locales)
+spring:
+  config:
+    activate:
+      on-profile: sandbox
+
+whatsapp:
+  phone-number-id: 875926168934240
+  access-token: ${WHATSAPP_SANDBOX_TOKEN}
+  webhook-verify-token: mi_token_sandbox_2025
+  base-url: https://graph.facebook.com/v20.0
+
+---
+# PERFIL: PRODUCTION
+spring:
+  config:
+    activate:
+      on-profile: production
+
+whatsapp:
+  phone-number-id: ${WHATSAPP_PHONE_ID}
+  access-token: ${WHATSAPP_ACCESS_TOKEN}
+  webhook-verify-token: ${WHATSAPP_VERIFY_TOKEN}
+  base-url: https://graph.facebook.com/v20.0
