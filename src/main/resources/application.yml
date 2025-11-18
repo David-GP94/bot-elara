@@ -55,3 +55,7 @@ whatsapp:
   access-token: ${WHATSAPP_ACCESS_TOKEN}
   webhook-verify-token: ${WHATSAPP_VERIFY_TOKEN}
   base-url: https://graph.facebook.com/v20.0
+
+respondio:
+  api-url: https://api.respond.io/v1  # O la versión exacta, e.g., /v1.3 si aplica
+  api-key: ${RESPONDIO_API_KEY}  # Inyecta desde .env o secrets
