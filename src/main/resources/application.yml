@@ -1,5 +1,3 @@
-# src/main/resources/application.yml
-
 server:
   port: 8080
 
@@ -38,7 +36,7 @@ spring:
       on-profile: sandbox
 
 whatsapp:
-  phone-number-id: 875926168934240
+  phone-number-id: 915165248340034
   access-token: ${WHATSAPP_SANDBOX_TOKEN}
   webhook-verify-token: mi_token_sandbox_2025
   base-url: https://graph.facebook.com/v20.0
@@ -57,5 +55,5 @@ whatsapp:
   base-url: https://graph.facebook.com/v20.0
 
 respondio:
-  api-url: https://api.respond.io/v1  # O la versión exacta, e.g., /v1.3 si aplica
+  api-url: https://api.respond.io/v1  # O la versiï¿½n exacta, e.g., /v1.3 si aplica
   api-key: ${RESPONDIO_API_KEY}  # Inyecta desde .env o secrets

@@ -3,15 +3,13 @@ package com.bot.elara.Infrastructure.Entrypoints.Rest;
 import com.bot.elara.Application.Service.OnboardingService;
 import com.bot.elara.Infrastructure.External.Whatsapp.Config.WhatsAppConfig;
 import com.bot.elara.Infrastructure.External.Whatsapp.Model.Image;
-import com.bot.elara.Infrastructure.External.Whatsapp.Model.WhatsAppWebhookPayload;
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Objects;
 
 @RestController
 @RequestMapping("/webhook")
@@ -41,51 +39,58 @@ public class WhatsAppWebhookController {
     }
 
     @PostMapping
-    public ResponseEntity<Void> receive(@RequestBody String rawPayload) {  // ← CAMBIO: String
-        log.info("=== WEBHOOK CRUDO ===");
-        log.info("Raw: {}", rawPayload);
+    public ResponseEntity<Void> receive(@RequestBody JsonNode payload) {
+        log.info("=== WEBHOOK RECIBIDO ===");
 
         try {
-            WhatsAppWebhookPayload payload = objectMapper.readValue(rawPayload, WhatsAppWebhookPayload.class);
-            log.info("Parseado OK");
+            for (JsonNode entry : payload.path("entry")) {
+                for (JsonNode change : entry.path("changes")) {
+                    JsonNode value = change.path("value");
+                    JsonNode messages = value.path("messages");
 
-            if (payload.getEntry() == null || payload.getEntry().isEmpty()) {
-                log.warn("Entry vacío");
-                return ResponseEntity.ok().build();
-            }
+                    for (JsonNode message : messages) {
+                        String from = message.path("from").asText();
+                        String type = message.path("type").asText();
 
-            payload.getEntry().forEach(entry -> {
-                if (entry.getChanges() == null || entry.getChanges().isEmpty()) return;
+                        log.info("Mensaje de {} | Tipo: {}", from, type);
 
-                entry.getChanges().forEach(change -> {
-                    var value = change.getValue();
-                    if (value == null || value.getMessages() == null || value.getMessages().isEmpty()) return;
-
-                    value.getMessages().forEach(message -> {
-                        String from = message.getFrom();
-                        String type = message.getType();
-
-                        log.info("MENSAJE → from: {} | type: {}", from, type);
-
-                        if ("text".equals(type) && message.getText() != null) {
-                            String body = message.getText().getBody().trim();
-                            log.info("Texto: '{}'", body);
+                        if ("text".equals(type)) {
+                            String body = message.path("text").path("body").asText();
                             onboardingService.processText(from, body);
-                        } else if ("image".equals(type) && message.getImage() != null) {
-                            Image image = message.getImage();
-                            log.info("Imagen: id={}", image.getId());
-                            onboardingService.processImage(from, image);
-                        } else {
-                            log.warn("Tipo no soportado: {}", type);
-                        }
-                    });
-                });
-            });
 
-        } catch (JsonProcessingException e) {
-            log.error("JSON inválido", e);
+                        } else if ("interactive".equals(type)) {
+                            JsonNode interactive = message.path("interactive");
+                            String interactiveType = interactive.path("type").asText();
+
+                            if ("button_reply".equals(interactiveType)) {
+                                String title = interactive.path("button_reply").path("title").asText();
+                                log.info("Botón presionado: '{}'", title);
+                                onboardingService.processText(from, title);
+
+                            } else if ("list_reply".equals(interactiveType)) {
+                                String listId = interactive.path("list_reply").path("id").asText();
+                                String title = interactive.path("list_reply").path("title").asText();
+                                log.info("Opción de lista seleccionada: id={}, título={}", listId, title);
+                                onboardingService.processListSelection(from, listId);
+
+                            } else {
+                                log.warn("Tipo interactive no manejado: {}", interactiveType);
+                            }
+
+                        } else if ("image".equals(type)) {
+                            String imageId = message.path("image").path("id").asText();
+                            Image image = new Image();
+                            image.setId(imageId);
+                            onboardingService.processImage(from, image);
+
+                        } else {
+                            log.info("Tipo de mensaje no manejado: {}", type);
+                        }
+                    }
+                }
+            }
         } catch (Exception e) {
-            log.error("Error webhook", e);
+            log.error("Error procesando webhook", e);
         }
 
         return ResponseEntity.ok().build();

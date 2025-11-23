@@ -1,9 +1,13 @@
 package com.bot.elara.Infrastructure.External.Whatsapp.Model;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class Image {
     @JsonProperty("caption")
     private String caption;
@@ -19,4 +23,8 @@ public class Image {
 
     @JsonProperty("url")
     private String url;
+
+    public Image(String id) {
+        this.id = id;
+    }
 }
