@@ -21,6 +21,7 @@ public class Patient {
 
     @Enumerated(EnumType.STRING)
     private OnboardingStep currentStep;
+    private String lastListContext;
 
     // === FLUJO PRINCIPAL ===
     private String padecimiento; // Acne, Caida de Pelo, Anti-edad, Rosacea, Manchas, Dermatitis, Otros

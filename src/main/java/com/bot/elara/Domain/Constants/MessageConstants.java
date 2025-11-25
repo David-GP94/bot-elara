@@ -39,11 +39,20 @@ public class MessageConstants {
     public static final String M_12 = "¿Qué tan grave consideras tu acné?";
     public static final List<String> M_12_OPTIONS = List.of("Leve", "Moderado", "Grave", "Muy grave");
 
-    public static final String M_37 = "¿Qué tan grave consideras tus manchas?";
-    public static final List<String> M_37_OPTIONS = List.of("Leve(casi no se ven)", "Moderado(se notan)", "Grave (se ven mucho)");
+    public static final String M_37 = "¿Qué tan graves son tus manchas?";
+    public static final List<String> M_37_OPTIONS = List.of(
+            "Leves",           // 5
+            "Moderadas",       // 10
+            "Graves"           // 6
+    );
 
-    public static final String M_40 = "¿Qué tan grave consideras tu rosácea/enrojecimiento de la piel?";
-    public static final List<String> M_40_OPTIONS = List.of("Leve", "Moderado", "c) Grave");
+    // ROSÁCEA - GRAVEDAD
+    public static final String M_40 = "¿Qué tan grave es tu rosácea?";
+    public static final List<String> M_40_OPTIONS = List.of(
+            "Leve",
+            "Moderada",
+            "Grave"
+    );
 
     public static final String M_13 = "Perfecto, esto es importante. ¿Has recibido tratamiento para el anteriormente?";
     public static final List<String> M_13_OPTIONS = List.of("No", "Sí");
@@ -54,14 +63,14 @@ public class MessageConstants {
     public static final String M_16 = "Por favor ingresa que alergia tienes";
 
     public static final String M_17 = "¿Tomas algún medicamento, suplemento alimenticio y/o vitaminas?";
-    public static final List<String> M_17_OPTIONS = List.of("a) No", "b) Sí");
+    public static final List<String> M_17_OPTIONS = List.of("No", "Sí");
     public static final String M_18 = "Por favor escribe en una linea los medicamentos, suplemento alimenticio o vitaminas que usas.";
 
     public static final String M_20 = "¡Muy bien! Ahora tus fotos. Puedes cargar hasta 5 imágenes del área del cuerpo sobre la que quieres consultar.";
-    public static final List<String> M_20_OPTIONS = List.of("a) Cargar ahora", "b) Cargar después");
+    public static final List<String> M_20_OPTIONS = List.of("Cargar ahora", "Cargar después");
     public static final String M_21 = "Por favor adjunta tu fotografía";
     public static final String M_22 = "¿Deseas cargar mas imagenes?";
-    public static final List<String> M_22_OPTIONS = List.of("a) No", "b) Sí");
+    public static final List<String> M_22_OPTIONS = List.of("No", "Sí");
 
     public static final String M_23 = "¡Listo! Gracias por completar tu consulta. Aquí tienes el link para realizar tu pago:";
     public static final String M_24 = "Tu pago fue procesado correctamente, tu dermatóloga revisará tu caso, entra a tu cuenta para darle seguimiento.";
@@ -69,37 +78,49 @@ public class MessageConstants {
 
     // Anti-edad
     public static final String M_26 = "¡Listo! Empecemos con tu historial. ¿Qué te gustaría mejorar de tu piel principalmente?";
-    public static final List<String> M_26_OPTIONS = List.of("a) Manchas y tono desigual", "b) Arrugas o líneas finas", "c) Sequedad profunda", "d) Poros y textura");
+    public static final List<String> M_26_OPTIONS = List.of("Manchas y tono desigual", "Arrugas o líneas finas", "Sequedad profunda", "Poros y textura");
 
     public static final String M_27 = "¿Cómo describirías tu tipo de piel?";
-    public static final List<String> M_27_OPTIONS = List.of("a) Seca", "b) Mixta", "c) Grasa", "d) No lo sé");
+    public static final List<String> M_27_OPTIONS = List.of("Seca", "Mixta", "Grasa", "No lo sé");
 
     public static final String M_28 = "¿Qué tipo de sensibilidad en piel tienes?";
-    public static final List<String> M_28_OPTIONS = List.of("a) Nunca se irrita", "b) A veces se enrojece", "c) Se irrita con facilidad");
+    public static final List<String> M_28_OPTIONS = List.of("Nunca se irrita", "A veces se enrojece", "Se irrita con facilidad");
 
     public static final String M_29 = " ¿Tienes alguna enfermedad?, si tu respuesta es sí, ¿cuál?";
-    public static final List<String> M_29_OPTIONS = List.of("a) No", "b) Si");
+    public static final List<String> M_29_OPTIONS = List.of("No", "Si");
 
     public static final String M_30 = "¿Te expones al sol?";
-    public static final List<String> M_30_OPTIONS = List.of("a) Rara vez", "b) A veces", "c) Diario");
+    public static final List<String> M_30_OPTIONS = List.of("Rara vez", "A veces", "Diario");
 
     public static final String M_31 = "¿Usas protector solar?";
-    public static final List<String> M_31_OPTIONS = List.of("a) Sí, siempre", "b) A veces", "c) Nunca");
+    public static final List<String> M_31_OPTIONS = List.of("Sí, siempre", "A veces", "Nunca");
 
-    // Caída de pelo
-    public static final String M_34 = "¡Listo! Empecemos con tu historial. ¿En qué área notas la caída de pelo?";
-    public static final List<String> M_34_OPTIONS = List.of("a) Área de entradas", "b) Área de la coronilla", "c) Área de las entradas + coronilla");
+    // ÁREA CAÍDA DE PELO
+    public static final String M_34 = "¿En qué zona notas la caída?";
+    public static final List<String> M_34_OPTIONS = List.of(
+            "Entradas",
+            "Coronilla",
+            "Entradas + coronilla"   // ← 21 caracteres → OK!
+    );
 
-    public static final String M_35 = "¿Tienes familiares con antecedentes de caída de pelo?";
-    public static final List<String> M_35_OPTIONS = List.of("a) Padre", "b) Madre", "c) Abuelo materno", "d) Hermanos", "e) No tengo familiares con antecedentes", "f) No lo sé");
+    // ANTECEDENTES FAMILIARES (esta también estaba muy larga)
+    public static final String M_35 = "¿Familiares con caída de pelo?";
+    public static final List<String> M_35_OPTIONS = List.of(
+            "Padre",
+            "Madre",
+            "Abuelo materno",
+            "Hermanos",
+            "No",
+            "No lo sé"
+    );
 
     // Embarazo (solo mujeres)
     public static final String M_33 = "¡Muy bien! Esto es importante. Elige una opción.";
     public static final List<String> M_33_OPTIONS = List.of(
-            "a) Tengo planes de embarazo a corto plazo",
-            "b) Estoy embarazada",
-            "c) Estoy lactando",
-            "d) Ninguna de las anteriores"
+            "Planes de embarazo",
+            "Estoy embarazada",
+            "Estoy lactando",
+            "Ninguna"
     );
 
     // Notas adicionales por padecimiento

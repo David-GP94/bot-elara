@@ -86,16 +86,34 @@ public class OnboardingService {
     }
 
     public void processImage(String from, Image image) {
+        Patient p = getOrCreatePatient(from);
 
+        if (p.getCurrentStep() != OnboardingStep.ASK_MAS_FOTOS) {
+            log.warn("Imagen recibida fuera del flujo de fotos. Paso actual: {}", p.getCurrentStep());
+            sendText(from, "Por favor sigue el flujo. Escribe *HOLA* para reiniciar.");
+            return;
+        }
+
+        // === MOCK: guardamos la imagen ===
+        String mockUrl = "https://mock-fotos.com/foto_" + image.getId() + ".jpg";
+        p.getPhotoUrls().add(mockUrl);
+        save(p);
+
+        log.info("Imagen recibida y guardada (MOCK) para {} → {}", from, mockUrl);
+
+        // Confirmamos con un mensaje bonito + pregunta + botones
+        sendText(from, "¡Foto recibida correctamente! Hemos guardado tu imagen.");
+
+        // Aquí va la pregunta + botones (SIN duplicar)
+        askWithButtons(p, OnboardingStep.ASK_MAS_FOTOS,
+                "¿Deseas cargar más imágenes?",
+                M_22_OPTIONS);
     }
 
     // ====================== TODOS LOS HANDLERS ======================
 
     private void handleStart(Patient p) {
-        List<String> optionTexts = List.of("Acné", "Caída de pelo", "Anti-edad", "Rosácea", "Manchas", "Dermatitis", "Otros");
-        sendListOptions(p, M_1, "Ver opciones", optionTexts);
-        p.setCurrentStep(OnboardingStep.ASK_MOTIVO);
-        save(p);
+        askWithList(p, OnboardingStep.ASK_MOTIVO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
     }
 
     private void handleMotivo(Patient p, String text) {
@@ -227,7 +245,9 @@ public class OnboardingService {
         String selected = getSelectedOption(text, M_10_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setFuma("Sí".equalsIgnoreCase(selected));
-        askWithButtons(p, OnboardingStep.ASK_DESDE_CUANDO, M_11, M_11_OPTIONS);
+        save(p);
+
+        askWithList(p, OnboardingStep.ASK_DESDE_CUANDO, M_11, "Elegir tiempo", M_11_OPTIONS, "desde_cuando");
     }
 
     private void handleDesdeCuando(Patient p, String text) {
@@ -241,10 +261,28 @@ public class OnboardingService {
 
     private void sendNextQuestionAfterDesdeCuando(Patient p) {
         switch (p.getCurrentStep()) {
-            case ASK_GRAVEDAD -> askWithButtons(p, OnboardingStep.ASK_GRAVEDAD,
-                    getGravedadMessage(p.getPadecimiento()), getGravedadOptions(p.getPadecimiento()));
-            case ASK_MEJORA_PRINCIPAL -> askWithButtons(p, OnboardingStep.ASK_MEJORA_PRINCIPAL, M_26, M_26_OPTIONS);
-            case ASK_AREA_CAIDA -> askWithButtons(p, OnboardingStep.ASK_AREA_CAIDA, M_34, M_34_OPTIONS);
+            case ASK_GRAVEDAD -> {
+                var options = getGravedadOptions(p.getPadecimiento());
+                if (options.size() > 3) {
+                    askWithList(p, OnboardingStep.ASK_GRAVEDAD,
+                            getGravedadMessage(p.getPadecimiento()),
+                            "Seleccionar gravedad",
+                            options,
+                            "gravedad_" + p.getPadecimiento().toLowerCase().replace(" ", "_"));
+                } else {
+                    askWithButtons(p, OnboardingStep.ASK_GRAVEDAD,
+                            getGravedadMessage(p.getPadecimiento()), options);
+                }
+            }
+            case ASK_MEJORA_PRINCIPAL -> {
+                // 4 opciones → también lista
+                askWithList(p, OnboardingStep.ASK_MEJORA_PRINCIPAL,
+                        M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
+            }
+            case ASK_AREA_CAIDA -> {
+                // Solo 3 → botones están bien
+                askWithButtons(p, OnboardingStep.ASK_AREA_CAIDA, M_34, M_34_OPTIONS);
+            }
             default -> askWithButtons(p, OnboardingStep.ASK_TRATAMIENTO_ANTERIOR, M_13, M_13_OPTIONS);
         }
     }
@@ -328,7 +366,14 @@ public class OnboardingService {
 
     private void goToNextAfterEnfermedades(Patient p) {
         if ("Femenino".equals(p.getGenero())) {
-            askWithButtons(p, OnboardingStep.ASK_STATUS_EMBARAZO, M_33, M_33_OPTIONS);
+            askWithList(
+                    p,
+                    OnboardingStep.ASK_STATUS_EMBARAZO,
+                    M_33,
+                    "Seleccionar opción",
+                    M_33_OPTIONS,
+                    "status_embarazo"   // ← clave única para el mapeo
+            );
         } else {
             goToNotasAdicionales(p);
         }
@@ -643,44 +688,103 @@ public class OnboardingService {
         whatsAppClient.sendReplyButtons(p.getWhatsappId(), text, titles);
     }
 
-    private void sendListOptions(Patient p, String bodyText, String buttonText, List<String> optionTexts) {
-        List<Map<String, String>> rows = new ArrayList<>();
-        for (int i = 0; i < optionTexts.size(); i++) {
-            Map<String, String> row = new HashMap<>();
-            row.put("id", "opt_" + (i + 1));  // ID único para mapeo
-            row.put("title", optionTexts.get(i));  // Título visible
-            row.put("description", "");  // Opcional: descripción corta
-            rows.add(row);
-        }
-        whatsAppClient.sendListMessage(p.getWhatsappId(), "Motivo de consulta", bodyText, buttonText, rows);
-    }
-
-    // Nuevo método público para listas
     public void processListSelection(String from, String listId) {
-        Patient p = getOrCreatePatient(from);
-        String selected = mapListIdToOption(listId);
+        log.info("processListSelection → listId: '{}'", listId);
 
-        if (selected == null) {
-            sendText(from, "Opción no válida. Escribe *HOLA* para comenzar de nuevo.");
+        if (listId == null || listId.isBlank()) {
+            sendText(from, "Error: opción inválida.");
             return;
         }
 
-        // Reutiliza toda tu lógica existente
-        processText(from, selected);
+        Patient p = patientRepository.findByWhatsappId(from)
+                .orElseThrow(() -> new RuntimeException("Paciente no encontrado: " + from));
+
+        String context = p.getLastListContext();
+
+        if (context == null) {
+            log.error("lastListContext es NULL para {} – aunque la columna existe", from);
+            sendText(from, "Error interno. Escribe *HOLA* para reiniciar.");
+            return;
+        }
+
+        // ... resto del código igual (ya está perfecto)
+        if (!listId.startsWith(context + "_")) {
+            log.warn("listId '{}' no coincide con contexto '{}'", listId, context);
+            sendText(from, "Error de flujo. Escribe *HOLA* para reiniciar.");
+            return;
+        }
+
+        int index = Integer.parseInt(listId.substring(listId.lastIndexOf("_") + 1)) - 1;
+        List<String> options = getOptionsForContext(context);
+
+        if (index < 0 || index >= options.size()) {
+            sendText(from, "Opción inválida.");
+            return;
+        }
+
+        String selected = options.get(index);
+        log.info("✓ Selección correcta → contexto: {}, opción: {}", context, selected);
+
+        processText(from, selected);  // ← aquí sigue el flujo normal
     }
 
-    // Mapea el ID de la lista al texto real
-    private String mapListIdToOption(String listId) {
-        return switch (listId) {
-            case "opt_1" -> "Acné";
-            case "opt_2" -> "Caída de pelo";
-            case "opt_3" -> "Anti-edad";
-            case "opt_4" -> "Rosácea";
-            case "opt_5" -> "Manchas";
-            case "opt_6" -> "Dermatitis";
-            case "opt_7" -> "Otros";
-            default -> null;
+    // ==== NUEVO: askWithList GENÉRICO ====
+    private void askWithList(
+            Patient p,
+            OnboardingStep nextStep,
+            String bodyText,
+            String buttonText,
+            List<String> options,
+            String contextKey                    // ej: "motivo", "desde_cuando", "area_caida"
+    ) {
+        p.setCurrentStep(nextStep);
+        p.setLastListContext(contextKey);    // ← GUARDAMOS EL CONTEXTO
+        save(p);
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (int i = 0; i < options.size(); i++) {
+            Map<String, String> row = new HashMap<>();
+            row.put("id", contextKey + "_" + (i + 1));  // ej: desde_cuando_3
+            row.put("title", options.get(i));
+            row.put("description", "");
+            rows.add(row);
+        }
+        for (String opt : options) {
+            if (opt.length() > 24) {
+                log.error("OPCIÓN DEMASIADO LARGA (máx 24): '{}' ({} chars)", opt, opt.length());
+                sendText(p.getWhatsappId(), "Error temporal. Escribe *HOLA* para reiniciar.");
+                return;
+            }
+        }
+
+        whatsAppClient.sendListMessage(
+                p.getWhatsappId(),
+                null,
+                bodyText,
+                buttonText,
+                rows
+        );
+    }
+
+    // ==== NUEVO: devuelve las opciones según el contexto ====
+    private List<String> getOptionsForContext(String context) {
+        return switch (context) {
+            case "motivo" -> M_1_OPTIONS;
+            case "desde_cuando" -> M_11_OPTIONS;
+            case "mejora_principal" -> M_26_OPTIONS;
+            case "area_caida" -> M_34_OPTIONS;
+            case "antecedentes_familia" -> M_35_OPTIONS;
+            case "status_embarazo" -> M_33_OPTIONS;
+
+            // GRAVEDAD DINÁMICA
+            case "gravedad_acne" -> M_12_OPTIONS;
+            case "gravedad_manchas" -> M_37_OPTIONS;
+            case "gravedad_rosacea" -> M_40_OPTIONS;
+
+            default -> {
+                log.warn("Contexto de lista desconocido: {}", context);
+                yield List.of();
+            }
         };
     }
-
 }
