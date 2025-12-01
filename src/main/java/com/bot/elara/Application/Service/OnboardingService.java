@@ -6,6 +6,7 @@ import com.bot.elara.Domain.Repository.PatientRepository;
 import com.bot.elara.Infrastructure.External.Storage.S3Service;
 import com.bot.elara.Infrastructure.External.Whatsapp.Model.Image;
 import com.bot.elara.Infrastructure.External.Whatsapp.WhatsAppCloudApiClient;
+import com.bot.elara.Util.DateParserUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ public class OnboardingService {
     private final PatientRepository patientRepository;
     private final WhatsAppCloudApiClient whatsAppClient;
     private final S3Service s3Service;
+    private final DateParserUtil dateParserUtil;
 
     // URLs reales de tus documentos (ponlas en S3 o en tu dominio)
     private static final String TERMINOS_URL = "https://tu-dominio.com/docs/terminos-y-condiciones.pdf";
@@ -175,7 +177,7 @@ public class OnboardingService {
         // Si es menor de edad
         if (selected.equals("Menor de edad")) {
             sendText(p.getWhatsappId(), "Lo sentimos, debes ser mayor de 18 años o estar autorizado para continuar.\nConsulta terminada.");
-            p.setCurrentStep(OnboardingStep.ERROR);
+            p.setCurrentStep(OnboardingStep.START);
             save(p);
             return;
         }
@@ -205,28 +207,74 @@ public class OnboardingService {
 
     private void handleFechaNac(Patient p, String text) {
         try {
-            LocalDate fecha = LocalDate.parse(text.trim(), DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-            if (fecha.isAfter(LocalDate.now().minusYears(13))) {
-                sendText(p.getWhatsappId(), "Debes tener al menos 13 años para continuar.");
-                p.setCurrentStep(OnboardingStep.ERROR);
+            LocalDate fecha = dateParserUtil.parseFechaNacimiento(text.trim());
+
+            log.info("Fecha de nacimiento parseada para {}: {}", p.getWhatsappId(), fecha);
+
+            if (fecha == null || fecha.isAfter(LocalDate.now())) {
+                sendText(p.getWhatsappId(), """
+                No pude entender la fecha 😅
+                Por favor escríbela de alguna de estas formas:
+                • 15/03/1990
+                • 15-03-1990
+                • 15031990
+                • 15 de marzo de 1990
+                • 15 marzo 1990""");
+                return;
+            }
+
+            // Validación: debe ser mayor de 18 años (tu bloque original, sin tocar)
+            if (fecha.isAfter(LocalDate.now().minusYears(18))) {
+                sendText(p.getWhatsappId(), "Lo sentimos, para continuar con la consulta dermatológica debes ser mayor de 18 años.");
+                p.setCurrentStep(OnboardingStep.START);
                 save(p);
                 return;
             }
             p.setFechaNacimiento(fecha);
             askWithText(p, OnboardingStep.ASK_PESO, M_8);
+
         } catch (Exception e) {
-            sendText(p.getWhatsappId(), "Formato inválido. Usa AAAA-MM-DD (ejemplo: 1995-08-20)");
+            log.error("Error inesperado procesando fecha de nacimiento para paciente {} - texto recibido: '{}'",
+                    p.getWhatsappId(), text, e);
+            sendText(p.getWhatsappId(),
+                    "Ocurrió un error inesperado 😰 Por favor intenta de nuevo con tu fecha de nacimiento.");
         }
     }
 
     private void handlePeso(Patient p, String text) {
         try {
-            int peso = Integer.parseInt(text.replaceAll("[^0-9]", "").trim());
-            if (peso < 20 || peso > 300) { sendText(p.getWhatsappId(), "Ingresa un peso realista (20-300 kg)"); return; }
+            String cleaned = text.trim()
+                    .toLowerCase()
+                    .replaceAll("[^0-9,\\.]+", "")  // quita letras, "kg", espacios, etc.
+                    .replace(",", ".");             // convierte coma mexicana a punto
+
+            if (cleaned.isEmpty()) {
+                throw new NumberFormatException("Sin números");
+            }
+
+            double peso = Double.parseDouble(cleaned);
+
+            // Validación de rango realista
+            if (peso < 20.0 || peso > 300.0) {
+                sendText(p.getWhatsappId(), """
+                El peso debe estar entre 20 y 300 kg
+                Por favor ingresa un valor realista (ej. 70 o 70.5)""");
+                return;
+            }
+
             p.setPesoKg(peso);
+            log.info("Peso registrado para {}: {} kg", p.getWhatsappId(), peso);
             askWithText(p, OnboardingStep.ASK_ALTURA, M_9);
+
         } catch (Exception e) {
-            sendText(p.getWhatsappId(), "Por favor ingresa solo el número (ej. 70)");
+            log.info("Peso no válido para {}: '{}'", p.getWhatsappId(), text);
+            sendText(p.getWhatsappId(), """
+            No entendí el peso
+            Por favor escribe solo el número:
+            • 70
+            • 70.5
+            • 70,5 (también funciona)
+            Ejemplos válidos: 65, 72.3, 80.5""");
         }
     }
 
@@ -246,8 +294,12 @@ public class OnboardingService {
         if (selected == null) { invalidOption(p); return; }
         p.setFuma("Sí".equalsIgnoreCase(selected));
         save(p);
-
-        askWithList(p, OnboardingStep.ASK_DESDE_CUANDO, M_11, "Elegir tiempo", M_11_OPTIONS, "desde_cuando");
+        String padecimiento = p.getPadecimiento();
+        if (padecimiento != null && padecimiento.toLowerCase().contains("anti-edad".toLowerCase())) {
+            askWithList(p, OnboardingStep.ASK_MEJORA_PRINCIPAL, M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
+        } else{
+            askWithList(p, OnboardingStep.ASK_DESDE_CUANDO, M_11, "Elegir tiempo", M_11_OPTIONS, "desde_cuando");
+        }
     }
 
     private void handleDesdeCuando(Patient p, String text) {
@@ -385,47 +437,83 @@ public class OnboardingService {
         String selected = getSelectedOption(text, M_26_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setMejoraPrincipal(selected);
-        askWithButtons(p, OnboardingStep.ASK_TIPO_PIEL, M_27, M_27_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_TIPO_PIEL,
+                M_27,
+                "Seleccionar tipo",
+                M_27_OPTIONS,
+                "tipo_piel"
+        );
     }
 
     private void handleTipoPiel(Patient p, String text) {
         String selected = getSelectedOption(text, M_27_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setTipoPiel(selected);
-        askWithButtons(p, OnboardingStep.ASK_SENSIBILIDAD_PIEL, M_28, M_28_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_SENSIBILIDAD_PIEL,
+                M_28,
+                "Seleccionar opcion",
+                M_28_OPTIONS,
+                "sensibilidad_piel"
+        );
+
     }
 
     private void handleSensibilidadPiel(Patient p, String text) {
         String selected = getSelectedOption(text, M_28_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setSensibilidadPiel(selected);
-        askWithButtons(p, OnboardingStep.ASK_EXPOSICION_SOL, M_30, M_30_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_EXPOSICION_SOL,
+                M_30,
+                "Seleccionar opcion",
+                M_30_OPTIONS,
+                "exposicion_sol"
+        );
     }
 
     private void handleExposicionSol(Patient p, String text) {
         String selected = getSelectedOption(text, M_30_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setExposicionSol(selected);
-        askWithButtons(p, OnboardingStep.ASK_USA_PROTECTOR, M_31, M_31_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_USA_PROTECTOR,
+                M_31,
+                "Seleccionar opcion",
+                M_31_OPTIONS,
+                "uso-protector"
+        );
     }
 
     private void handleUsaProtector(Patient p, String text) {
         String selected = getSelectedOption(text, M_31_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setUsaProtector(selected);
-        goToNotasAdicionales(p);
+        askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
     }
 
     private void handleAreaCaida(Patient p, String text) {
         String selected = getSelectedOption(text, M_34_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setAreaCaida(selected);
-        askWithButtons(p, OnboardingStep.ASK_ANTECEDENTES_FAMILIA, M_35, M_35_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_ANTECEDENTES_FAMILIA,
+                M_35,
+                "Seleccionar opción",
+                M_35_OPTIONS,
+                "antecedentes_familia"
+        );
     }
 
     private void handleAntecedentesFamilia(Patient p, String text) {
         p.setAntecedentesFamiliares(text.trim());
-        goToNotasAdicionales(p);
+        askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
     }
 
     private void handleStatusEmbarazo(Patient p, String text) {
@@ -484,9 +572,9 @@ public class OnboardingService {
             return;
         }
         p.setPagoProcesado(true);
-        p.setCurrentStep(OnboardingStep.COMPLETED);
+        p.setCurrentStep(OnboardingStep.START);
         save(p);
-        sendText(p.getWhatsappId(), M_24 + "\n\nhttps://panel.tuclinica.com/patient/" + p.getWhatsappId());
+        sendText(p.getWhatsappId(), M_24 + "\n\nhttps://panel.tuclinica.com/patient/" + p.getWhatsappId() + "\n\n Si deseas realizar una consulta nueva, escribe: hola");
     }
 
     // ==================== DOCUMENTOS LEGALES Y PAGO ====================
@@ -775,6 +863,10 @@ public class OnboardingService {
             case "area_caida" -> M_34_OPTIONS;
             case "antecedentes_familia" -> M_35_OPTIONS;
             case "status_embarazo" -> M_33_OPTIONS;
+            case "tipo_piel" -> M_27_OPTIONS;
+            case "sensibilidad_piel" -> M_28_OPTIONS;
+            case "exposicion_sol" -> M_30_OPTIONS;
+            case "uso-protector" -> M_31_OPTIONS;
 
             // GRAVEDAD DINÁMICA
             case "gravedad_acne" -> M_12_OPTIONS;

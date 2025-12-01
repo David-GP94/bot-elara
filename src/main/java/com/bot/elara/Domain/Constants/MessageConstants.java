@@ -26,7 +26,7 @@ public class MessageConstants {
     public static final String M_6 = "¿Cuál es tu género de nacimiento?";
     public static final List<String> M_6_OPTIONS = List.of("Femenino", "Masculino");
 
-    public static final String M_7 = "¡Gracias!, ¿cuál fecha de nacimiento? (formato: AAAA-MM-DD)";
+    public static final String M_7 = "¡Gracias!, ¿cuál fecha de nacimiento? (formato: DD-MM-AAAA)";
     public static final String M_8 = "¿Cuál es tu peso? (Ej. 81 kg)";
     public static final String M_9 = "¿Cuál es tu altura? (Ej. 1.67)";
     public static final String M_10 = "¿Fumas?";
@@ -84,10 +84,10 @@ public class MessageConstants {
     public static final List<String> M_27_OPTIONS = List.of("Seca", "Mixta", "Grasa", "No lo sé");
 
     public static final String M_28 = "¿Qué tipo de sensibilidad en piel tienes?";
-    public static final List<String> M_28_OPTIONS = List.of("Nunca se irrita", "A veces se enrojece", "Se irrita con facilidad");
+    public static final List<String> M_28_OPTIONS = List.of("Nunca se irrita", "A veces se enrojece", "Se irrita facilmente");
 
     public static final String M_29 = " ¿Tienes alguna enfermedad?, si tu respuesta es sí, ¿cuál?";
-    public static final List<String> M_29_OPTIONS = List.of("No", "Si");
+    public static final List<String> M_29_OPTIONS = List.of("No", "Sí");
 
     public static final String M_30 = "¿Te expones al sol?";
     public static final List<String> M_30_OPTIONS = List.of("Rara vez", "A veces", "Diario");
