@@ -1,4 +1,4 @@
-package com.bot.elara.config;
+package com.bot.elara.Config;
 
 import io.github.cdimascio.dotenv.Dotenv;
 import org.springframework.context.annotation.Configuration;

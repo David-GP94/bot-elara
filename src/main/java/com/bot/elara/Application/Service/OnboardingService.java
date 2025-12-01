@@ -6,6 +6,7 @@ import com.bot.elara.Domain.Repository.PatientRepository;
 import com.bot.elara.Infrastructure.External.Storage.S3Service;
 import com.bot.elara.Infrastructure.External.Whatsapp.Model.Image;
 import com.bot.elara.Infrastructure.External.Whatsapp.WhatsAppCloudApiClient;
+import com.bot.elara.Util.DateParserUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,7 @@ public class OnboardingService {
     private final PatientRepository patientRepository;
     private final WhatsAppCloudApiClient whatsAppClient;
     private final S3Service s3Service;
+    private final DateParserUtil dateParserUtil;
 
     // URLs reales de tus documentos (ponlas en S3 o en tu dominio)
     private static final String TERMINOS_URL = "https://tu-dominio.com/docs/terminos-y-condiciones.pdf";
@@ -86,16 +88,34 @@ public class OnboardingService {
     }
 
     public void processImage(String from, Image image) {
+        Patient p = getOrCreatePatient(from);
 
+        if (p.getCurrentStep() != OnboardingStep.ASK_MAS_FOTOS) {
+            log.warn("Imagen recibida fuera del flujo de fotos. Paso actual: {}", p.getCurrentStep());
+            sendText(from, "Por favor sigue el flujo. Escribe *HOLA* para reiniciar.");
+            return;
+        }
+
+        // === MOCK: guardamos la imagen ===
+        String mockUrl = "https://mock-fotos.com/foto_" + image.getId() + ".jpg";
+        p.getPhotoUrls().add(mockUrl);
+        save(p);
+
+        log.info("Imagen recibida y guardada (MOCK) para {} → {}", from, mockUrl);
+
+        // Confirmamos con un mensaje bonito + pregunta + botones
+        sendText(from, "¡Foto recibida correctamente! Hemos guardado tu imagen.");
+
+        // Aquí va la pregunta + botones (SIN duplicar)
+        askWithButtons(p, OnboardingStep.ASK_MAS_FOTOS,
+                "¿Deseas cargar más imágenes?",
+                M_22_OPTIONS);
     }
 
     // ====================== TODOS LOS HANDLERS ======================
 
     private void handleStart(Patient p) {
-        List<String> optionTexts = List.of("Acné", "Caída de pelo", "Anti-edad", "Rosácea", "Manchas", "Dermatitis", "Otros");
-        sendListOptions(p, M_1, "Ver opciones", optionTexts);
-        p.setCurrentStep(OnboardingStep.ASK_MOTIVO);
-        save(p);
+        askWithList(p, OnboardingStep.ASK_MOTIVO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
     }
 
     private void handleMotivo(Patient p, String text) {
@@ -157,7 +177,7 @@ public class OnboardingService {
         // Si es menor de edad
         if (selected.equals("Menor de edad")) {
             sendText(p.getWhatsappId(), "Lo sentimos, debes ser mayor de 18 años o estar autorizado para continuar.\nConsulta terminada.");
-            p.setCurrentStep(OnboardingStep.ERROR);
+            p.setCurrentStep(OnboardingStep.START);
             save(p);
             return;
         }
@@ -187,28 +207,74 @@ public class OnboardingService {
 
     private void handleFechaNac(Patient p, String text) {
         try {
-            LocalDate fecha = LocalDate.parse(text.trim(), DateTimeFormatter.ofPattern("yyyy-MM-dd"));
-            if (fecha.isAfter(LocalDate.now().minusYears(13))) {
-                sendText(p.getWhatsappId(), "Debes tener al menos 13 años para continuar.");
-                p.setCurrentStep(OnboardingStep.ERROR);
+            LocalDate fecha = dateParserUtil.parseFechaNacimiento(text.trim());
+
+            log.info("Fecha de nacimiento parseada para {}: {}", p.getWhatsappId(), fecha);
+
+            if (fecha == null || fecha.isAfter(LocalDate.now())) {
+                sendText(p.getWhatsappId(), """
+                No pude entender la fecha 😅
+                Por favor escríbela de alguna de estas formas:
+                • 15/03/1990
+                • 15-03-1990
+                • 15031990
+                • 15 de marzo de 1990
+                • 15 marzo 1990""");
+                return;
+            }
+
+            // Validación: debe ser mayor de 18 años (tu bloque original, sin tocar)
+            if (fecha.isAfter(LocalDate.now().minusYears(18))) {
+                sendText(p.getWhatsappId(), "Lo sentimos, para continuar con la consulta dermatológica debes ser mayor de 18 años.");
+                p.setCurrentStep(OnboardingStep.START);
                 save(p);
                 return;
             }
             p.setFechaNacimiento(fecha);
             askWithText(p, OnboardingStep.ASK_PESO, M_8);
+
         } catch (Exception e) {
-            sendText(p.getWhatsappId(), "Formato inválido. Usa AAAA-MM-DD (ejemplo: 1995-08-20)");
+            log.error("Error inesperado procesando fecha de nacimiento para paciente {} - texto recibido: '{}'",
+                    p.getWhatsappId(), text, e);
+            sendText(p.getWhatsappId(),
+                    "Ocurrió un error inesperado 😰 Por favor intenta de nuevo con tu fecha de nacimiento.");
         }
     }
 
     private void handlePeso(Patient p, String text) {
         try {
-            int peso = Integer.parseInt(text.replaceAll("[^0-9]", "").trim());
-            if (peso < 20 || peso > 300) { sendText(p.getWhatsappId(), "Ingresa un peso realista (20-300 kg)"); return; }
+            String cleaned = text.trim()
+                    .toLowerCase()
+                    .replaceAll("[^0-9,\\.]+", "")  // quita letras, "kg", espacios, etc.
+                    .replace(",", ".");             // convierte coma mexicana a punto
+
+            if (cleaned.isEmpty()) {
+                throw new NumberFormatException("Sin números");
+            }
+
+            double peso = Double.parseDouble(cleaned);
+
+            // Validación de rango realista
+            if (peso < 20.0 || peso > 300.0) {
+                sendText(p.getWhatsappId(), """
+                El peso debe estar entre 20 y 300 kg
+                Por favor ingresa un valor realista (ej. 70 o 70.5)""");
+                return;
+            }
+
             p.setPesoKg(peso);
+            log.info("Peso registrado para {}: {} kg", p.getWhatsappId(), peso);
             askWithText(p, OnboardingStep.ASK_ALTURA, M_9);
+
         } catch (Exception e) {
-            sendText(p.getWhatsappId(), "Por favor ingresa solo el número (ej. 70)");
+            log.info("Peso no válido para {}: '{}'", p.getWhatsappId(), text);
+            sendText(p.getWhatsappId(), """
+            No entendí el peso
+            Por favor escribe solo el número:
+            • 70
+            • 70.5
+            • 70,5 (también funciona)
+            Ejemplos válidos: 65, 72.3, 80.5""");
         }
     }
 
@@ -227,7 +293,13 @@ public class OnboardingService {
         String selected = getSelectedOption(text, M_10_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setFuma("Sí".equalsIgnoreCase(selected));
-        askWithButtons(p, OnboardingStep.ASK_DESDE_CUANDO, M_11, M_11_OPTIONS);
+        save(p);
+        String padecimiento = p.getPadecimiento();
+        if (padecimiento != null && padecimiento.toLowerCase().contains("anti-edad".toLowerCase())) {
+            askWithList(p, OnboardingStep.ASK_MEJORA_PRINCIPAL, M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
+        } else{
+            askWithList(p, OnboardingStep.ASK_DESDE_CUANDO, M_11, "Elegir tiempo", M_11_OPTIONS, "desde_cuando");
+        }
     }
 
     private void handleDesdeCuando(Patient p, String text) {
@@ -241,10 +313,28 @@ public class OnboardingService {
 
     private void sendNextQuestionAfterDesdeCuando(Patient p) {
         switch (p.getCurrentStep()) {
-            case ASK_GRAVEDAD -> askWithButtons(p, OnboardingStep.ASK_GRAVEDAD,
-                    getGravedadMessage(p.getPadecimiento()), getGravedadOptions(p.getPadecimiento()));
-            case ASK_MEJORA_PRINCIPAL -> askWithButtons(p, OnboardingStep.ASK_MEJORA_PRINCIPAL, M_26, M_26_OPTIONS);
-            case ASK_AREA_CAIDA -> askWithButtons(p, OnboardingStep.ASK_AREA_CAIDA, M_34, M_34_OPTIONS);
+            case ASK_GRAVEDAD -> {
+                var options = getGravedadOptions(p.getPadecimiento());
+                if (options.size() > 3) {
+                    askWithList(p, OnboardingStep.ASK_GRAVEDAD,
+                            getGravedadMessage(p.getPadecimiento()),
+                            "Seleccionar gravedad",
+                            options,
+                            "gravedad_" + p.getPadecimiento().toLowerCase().replace(" ", "_"));
+                } else {
+                    askWithButtons(p, OnboardingStep.ASK_GRAVEDAD,
+                            getGravedadMessage(p.getPadecimiento()), options);
+                }
+            }
+            case ASK_MEJORA_PRINCIPAL -> {
+                // 4 opciones → también lista
+                askWithList(p, OnboardingStep.ASK_MEJORA_PRINCIPAL,
+                        M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
+            }
+            case ASK_AREA_CAIDA -> {
+                // Solo 3 → botones están bien
+                askWithButtons(p, OnboardingStep.ASK_AREA_CAIDA, M_34, M_34_OPTIONS);
+            }
             default -> askWithButtons(p, OnboardingStep.ASK_TRATAMIENTO_ANTERIOR, M_13, M_13_OPTIONS);
         }
     }
@@ -328,7 +418,14 @@ public class OnboardingService {
 
     private void goToNextAfterEnfermedades(Patient p) {
         if ("Femenino".equals(p.getGenero())) {
-            askWithButtons(p, OnboardingStep.ASK_STATUS_EMBARAZO, M_33, M_33_OPTIONS);
+            askWithList(
+                    p,
+                    OnboardingStep.ASK_STATUS_EMBARAZO,
+                    M_33,
+                    "Seleccionar opción",
+                    M_33_OPTIONS,
+                    "status_embarazo"   // ← clave única para el mapeo
+            );
         } else {
             goToNotasAdicionales(p);
         }
@@ -340,47 +437,83 @@ public class OnboardingService {
         String selected = getSelectedOption(text, M_26_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setMejoraPrincipal(selected);
-        askWithButtons(p, OnboardingStep.ASK_TIPO_PIEL, M_27, M_27_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_TIPO_PIEL,
+                M_27,
+                "Seleccionar tipo",
+                M_27_OPTIONS,
+                "tipo_piel"
+        );
     }
 
     private void handleTipoPiel(Patient p, String text) {
         String selected = getSelectedOption(text, M_27_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setTipoPiel(selected);
-        askWithButtons(p, OnboardingStep.ASK_SENSIBILIDAD_PIEL, M_28, M_28_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_SENSIBILIDAD_PIEL,
+                M_28,
+                "Seleccionar opcion",
+                M_28_OPTIONS,
+                "sensibilidad_piel"
+        );
+
     }
 
     private void handleSensibilidadPiel(Patient p, String text) {
         String selected = getSelectedOption(text, M_28_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setSensibilidadPiel(selected);
-        askWithButtons(p, OnboardingStep.ASK_EXPOSICION_SOL, M_30, M_30_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_EXPOSICION_SOL,
+                M_30,
+                "Seleccionar opcion",
+                M_30_OPTIONS,
+                "exposicion_sol"
+        );
     }
 
     private void handleExposicionSol(Patient p, String text) {
         String selected = getSelectedOption(text, M_30_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setExposicionSol(selected);
-        askWithButtons(p, OnboardingStep.ASK_USA_PROTECTOR, M_31, M_31_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_USA_PROTECTOR,
+                M_31,
+                "Seleccionar opcion",
+                M_31_OPTIONS,
+                "uso-protector"
+        );
     }
 
     private void handleUsaProtector(Patient p, String text) {
         String selected = getSelectedOption(text, M_31_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setUsaProtector(selected);
-        goToNotasAdicionales(p);
+        askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
     }
 
     private void handleAreaCaida(Patient p, String text) {
         String selected = getSelectedOption(text, M_34_OPTIONS);
         if (selected == null) { invalidOption(p); return; }
         p.setAreaCaida(selected);
-        askWithButtons(p, OnboardingStep.ASK_ANTECEDENTES_FAMILIA, M_35, M_35_OPTIONS);
+        askWithList(
+                p,
+                OnboardingStep.ASK_ANTECEDENTES_FAMILIA,
+                M_35,
+                "Seleccionar opción",
+                M_35_OPTIONS,
+                "antecedentes_familia"
+        );
     }
 
     private void handleAntecedentesFamilia(Patient p, String text) {
         p.setAntecedentesFamiliares(text.trim());
-        goToNotasAdicionales(p);
+        askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
     }
 
     private void handleStatusEmbarazo(Patient p, String text) {
@@ -439,9 +572,9 @@ public class OnboardingService {
             return;
         }
         p.setPagoProcesado(true);
-        p.setCurrentStep(OnboardingStep.COMPLETED);
+        p.setCurrentStep(OnboardingStep.START);
         save(p);
-        sendText(p.getWhatsappId(), M_24 + "\n\nhttps://panel.tuclinica.com/patient/" + p.getWhatsappId());
+        sendText(p.getWhatsappId(), M_24 + "\n\nhttps://panel.tuclinica.com/patient/" + p.getWhatsappId() + "\n\n Si deseas realizar una consulta nueva, escribe: hola");
     }
 
     // ==================== DOCUMENTOS LEGALES Y PAGO ====================
@@ -643,44 +776,107 @@ public class OnboardingService {
         whatsAppClient.sendReplyButtons(p.getWhatsappId(), text, titles);
     }
 
-    private void sendListOptions(Patient p, String bodyText, String buttonText, List<String> optionTexts) {
-        List<Map<String, String>> rows = new ArrayList<>();
-        for (int i = 0; i < optionTexts.size(); i++) {
-            Map<String, String> row = new HashMap<>();
-            row.put("id", "opt_" + (i + 1));  // ID único para mapeo
-            row.put("title", optionTexts.get(i));  // Título visible
-            row.put("description", "");  // Opcional: descripción corta
-            rows.add(row);
-        }
-        whatsAppClient.sendListMessage(p.getWhatsappId(), "Motivo de consulta", bodyText, buttonText, rows);
-    }
-
-    // Nuevo método público para listas
     public void processListSelection(String from, String listId) {
-        Patient p = getOrCreatePatient(from);
-        String selected = mapListIdToOption(listId);
+        log.info("processListSelection → listId: '{}'", listId);
 
-        if (selected == null) {
-            sendText(from, "Opción no válida. Escribe *HOLA* para comenzar de nuevo.");
+        if (listId == null || listId.isBlank()) {
+            sendText(from, "Error: opción inválida.");
             return;
         }
 
-        // Reutiliza toda tu lógica existente
-        processText(from, selected);
+        Patient p = patientRepository.findByWhatsappId(from)
+                .orElseThrow(() -> new RuntimeException("Paciente no encontrado: " + from));
+
+        String context = p.getLastListContext();
+
+        if (context == null) {
+            log.error("lastListContext es NULL para {} – aunque la columna existe", from);
+            sendText(from, "Error interno. Escribe *HOLA* para reiniciar.");
+            return;
+        }
+
+        // ... resto del código igual (ya está perfecto)
+        if (!listId.startsWith(context + "_")) {
+            log.warn("listId '{}' no coincide con contexto '{}'", listId, context);
+            sendText(from, "Error de flujo. Escribe *HOLA* para reiniciar.");
+            return;
+        }
+
+        int index = Integer.parseInt(listId.substring(listId.lastIndexOf("_") + 1)) - 1;
+        List<String> options = getOptionsForContext(context);
+
+        if (index < 0 || index >= options.size()) {
+            sendText(from, "Opción inválida.");
+            return;
+        }
+
+        String selected = options.get(index);
+        log.info("✓ Selección correcta → contexto: {}, opción: {}", context, selected);
+
+        processText(from, selected);  // ← aquí sigue el flujo normal
     }
 
-    // Mapea el ID de la lista al texto real
-    private String mapListIdToOption(String listId) {
-        return switch (listId) {
-            case "opt_1" -> "Acné";
-            case "opt_2" -> "Caída de pelo";
-            case "opt_3" -> "Anti-edad";
-            case "opt_4" -> "Rosácea";
-            case "opt_5" -> "Manchas";
-            case "opt_6" -> "Dermatitis";
-            case "opt_7" -> "Otros";
-            default -> null;
+    // ==== NUEVO: askWithList GENÉRICO ====
+    private void askWithList(
+            Patient p,
+            OnboardingStep nextStep,
+            String bodyText,
+            String buttonText,
+            List<String> options,
+            String contextKey                    // ej: "motivo", "desde_cuando", "area_caida"
+    ) {
+        p.setCurrentStep(nextStep);
+        p.setLastListContext(contextKey);    // ← GUARDAMOS EL CONTEXTO
+        save(p);
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (int i = 0; i < options.size(); i++) {
+            Map<String, String> row = new HashMap<>();
+            row.put("id", contextKey + "_" + (i + 1));  // ej: desde_cuando_3
+            row.put("title", options.get(i));
+            row.put("description", "");
+            rows.add(row);
+        }
+        for (String opt : options) {
+            if (opt.length() > 24) {
+                log.error("OPCIÓN DEMASIADO LARGA (máx 24): '{}' ({} chars)", opt, opt.length());
+                sendText(p.getWhatsappId(), "Error temporal. Escribe *HOLA* para reiniciar.");
+                return;
+            }
+        }
+
+        whatsAppClient.sendListMessage(
+                p.getWhatsappId(),
+                null,
+                bodyText,
+                buttonText,
+                rows
+        );
+    }
+
+    // ==== NUEVO: devuelve las opciones según el contexto ====
+    private List<String> getOptionsForContext(String context) {
+        return switch (context) {
+            case "motivo" -> M_1_OPTIONS;
+            case "desde_cuando" -> M_11_OPTIONS;
+            case "mejora_principal" -> M_26_OPTIONS;
+            case "area_caida" -> M_34_OPTIONS;
+            case "antecedentes_familia" -> M_35_OPTIONS;
+            case "status_embarazo" -> M_33_OPTIONS;
+            case "tipo_piel" -> M_27_OPTIONS;
+            case "sensibilidad_piel" -> M_28_OPTIONS;
+            case "exposicion_sol" -> M_30_OPTIONS;
+            case "uso-protector" -> M_31_OPTIONS;
+
+            // GRAVEDAD DINÁMICA
+            case "gravedad_acne" -> M_12_OPTIONS;
+            case "gravedad_manchas" -> M_37_OPTIONS;
+            case "gravedad_rosacea" -> M_40_OPTIONS;
+
+            default -> {
+                log.warn("Contexto de lista desconocido: {}", context);
+                yield List.of();
+            }
         };
     }
-
 }

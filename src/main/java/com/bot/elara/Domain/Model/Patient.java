@@ -21,6 +21,7 @@ public class Patient {
 
     @Enumerated(EnumType.STRING)
     private OnboardingStep currentStep;
+    private String lastListContext;
 
     // === FLUJO PRINCIPAL ===
     private String padecimiento; // Acne, Caida de Pelo, Anti-edad, Rosacea, Manchas, Dermatitis, Otros
@@ -31,7 +32,7 @@ public class Patient {
     private String nombreCompleto; // del paciente o de la persona consultada
     private String genero; // "Femenino", "Masculino"
     private LocalDate fechaNacimiento;
-    private Integer pesoKg;
+    private Double pesoKg;
     private Double alturaM;
     private Boolean fuma;
 

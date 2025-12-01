@@ -1,4 +1,4 @@
-package com.bot.elara.config;
+package com.bot.elara.Config;
 
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
