@@ -8,4 +8,5 @@ public interface PatientRepository {
     Optional<Patient> findByWhatsappId(String whatsappId);
     Patient save(Patient patient);
     Boolean existsByWhatsappId(String whatsappId);
+    void flush();
 }

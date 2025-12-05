@@ -5,10 +5,15 @@ import com.bot.elara.Infrastructure.External.Whatsapp.Model.TextBody;
 import com.bot.elara.Infrastructure.External.Whatsapp.Model.WhatsAppMessageRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
@@ -23,11 +28,18 @@ public class WhatsAppCloudApiClient {
 
     private final WhatsAppConfig config;
     private final RestTemplate restTemplate = new RestTemplate();
+    private String cachedLogoMediaId;
 
     public void sendText(String to, String text) {
+        String normalized = normalizePhone(to);
+        if (normalized == null) {
+            log.error("Número inválido: {}", to);
+            return;
+        }
+
         var request = WhatsAppMessageRequest.builder()
                 .messagingProduct("whatsapp")
-                .to(to)
+                .to(normalized)
                 .type("text")
                 .text(new TextBody(text))
                 .build();
@@ -40,9 +52,15 @@ public class WhatsAppCloudApiClient {
     }
 
     public void sendDocument(String to, String url, String filename, String phoneNumberId) {
+        String normalized = normalizePhone(to);
+        if (normalized == null) {
+            log.error("Número inválido: {}", to);
+            return;
+        }
+
         Map<String, Object> message = new HashMap<>();
         message.put("messaging_product", "whatsapp");
-        message.put("to", to);
+        message.put("to", normalized);
         message.put("type", "document");
 
         Map<String, Object> document = new HashMap<>();
@@ -59,16 +77,22 @@ public class WhatsAppCloudApiClient {
     }
 
     public void sendReplyButtons(String to, String bodyText, List<String> buttonTitles) {
+        String normalized = normalizePhone(to);
+        if (normalized == null) {
+            log.error("Número inválido: {}", to);
+            return;
+        }
+
         if (buttonTitles == null || buttonTitles.isEmpty() || buttonTitles.size() > 3) {
             log.warn("No se enviaron botones → títulos inválidos: {}", buttonTitles);
             // Enviamos texto plano como fallback
-            sendText(to, bodyText + "\n\n(Respondiendo con texto porque no hay opciones válidas)");
+            sendText(normalized, bodyText + "\n\n(Respondiendo con texto porque no hay opciones válidas)");
             return;
         }
 
         Map<String, Object> message = new HashMap<>();
         message.put("messaging_product", "whatsapp");
-        message.put("to", to);
+        message.put("to", normalized);
         message.put("type", "interactive");
 
         Map<String, Object> interactive = new HashMap<>();
@@ -93,7 +117,7 @@ public class WhatsAppCloudApiClient {
 
         if (buttons.isEmpty()) {
             log.warn("No hay botones válidos después del filtro. Enviando texto plano.");
-            sendText(to, bodyText);
+            sendText(normalized, bodyText);
             return;
         }
 
@@ -106,22 +130,28 @@ public class WhatsAppCloudApiClient {
 
         try {
             restTemplate.postForEntity(config.getMessagesUrl(), new HttpEntity<>(message, headers), String.class);
-            log.info("Botones enviados correctamente a {}: {}", to, buttonTitles);
+            log.info("Botones enviados correctamente a {}: {}", normalized, buttonTitles);
         } catch (Exception e) {
-            log.error("Error enviando botones a " + to, e);
-            sendText(to, bodyText + " (Error al mostrar botones)");
+            log.error("Error enviando botones a " + normalized, e);
+            sendText(normalized, bodyText + " (Error al mostrar botones)");
         }
     }
 
 
     public void sendListMessage(String to, String headerText, String bodyText, String buttonText, List<Map<String, String>> rows) {
+        String normalized = normalizePhone(to);
+        if (normalized == null) {
+            log.error("Número inválido: {}", to);
+            return;
+        }
+
         if (rows.size() > 10) {
             throw new IllegalArgumentException("Máximo 10 filas en list message");
         }
 
         Map<String, Object> message = new HashMap<>();
         message.put("messaging_product", "whatsapp");
-        message.put("to", to);
+        message.put("to", normalized);
         message.put("type", "interactive");
 
         Map<String, Object> interactive = new HashMap<>();
@@ -154,9 +184,127 @@ public class WhatsAppCloudApiClient {
 
         try {
             restTemplate.postForEntity(config.getMessagesUrl(), new HttpEntity<>(message, headers), String.class);
-            log.info("List message enviado a {} con {} filas", to, rows.size());
+            log.info("List message enviado a {} con {} filas", normalized, rows.size());
         } catch (Exception e) {
-            log.error("Error enviando list message a " + to, e);
+            log.error("Error enviando list message a " + normalized, e);
         }
+    }
+
+    public String getLogoMediaId() {
+        if (cachedLogoMediaId != null) {
+            return cachedLogoMediaId;
+        }
+        cachedLogoMediaId = uploadMedia(config.getLogoPath(), "image/jpeg");
+        return cachedLogoMediaId;
+    }
+
+    // En WhatsAppCloudApiClient.java - modifica uploadMedia
+    private String uploadMedia(String filePath, String mimeType) {
+        String uploadUrl = config.getBaseUrl() + "/" + config.getPhoneNumberId() + "/media";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(config.getAccessToken());
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("messaging_product", "whatsapp");
+
+        if (filePath == null || filePath.trim().isEmpty()) {
+            log.error("filePath es nulo o vacío");
+            return null;
+        }
+
+        // Manejo de rutas Windows con posible prefijo '/' y classpath
+        Resource resource;
+        if (filePath.startsWith("classpath:")) {
+            resource = new ClassPathResource(filePath.replace("classpath:", ""));
+        } else {
+            String normalizedPath = filePath;
+            if (normalizedPath.startsWith("/") && normalizedPath.length() > 2 && Character.isLetter(normalizedPath.charAt(1)) && normalizedPath.charAt(2) == ':') {
+                // caso "/C:/..." -> quitar slash inicial
+                normalizedPath = normalizedPath.substring(1);
+            }
+            resource = new FileSystemResource(normalizedPath);
+        }
+
+        if (!resource.exists()) {
+            log.error("Archivo no encontrado: {}", filePath);
+            return null;
+        }
+
+        body.add("file", resource);
+        body.add("type", mimeType);
+
+        try {
+            var response = restTemplate.postForEntity(uploadUrl, new HttpEntity<>(body, headers), Map.class);
+            Map<?, ?> respBody = response.getBody();
+            if (respBody == null) {
+                log.error("Respuesta vacía al subir media");
+                return null;
+            }
+            String mediaId = (String) respBody.get("id");
+            log.info("Logo subido. Media ID: {}", mediaId);
+            return mediaId;
+        } catch (Exception e) {
+            log.error("Error subiendo logo", e);
+            return null;
+        }
+    }
+
+
+    public void sendWelcomeImage(String to, String caption) {
+        String normalized = normalizePhone(to);
+        if (normalized == null) {
+            log.error("Número inválido: {}", to);
+            return;
+        }
+        String mediaId = getLogoMediaId();
+        if (mediaId == null) {
+            sendText(normalized, caption);
+            return;
+        }
+
+        Map<String, Object> message = new HashMap<>();
+        message.put("messaging_product", "whatsapp");
+        message.put("to", normalized);
+        message.put("type", "image");
+        message.put("image", Map.of("id", mediaId, "caption", caption));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(config.getAccessToken());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        try {
+            restTemplate.postForEntity(config.getMessagesUrl(), new HttpEntity<>(message, headers), String.class);
+            log.info("Imagen welcome enviada a {}", normalized);
+        } catch (Exception e) {
+            log.error("Error enviando imagen a " + normalized, e);
+        }
+    }
+
+    private String normalizePhone(String phone) {
+        if (phone == null) return null;
+        String trimmed = phone.trim();
+        if (trimmed.isEmpty()) return null;
+
+        // Remueve todo lo que no sea dígito
+        String cleaned = trimmed.replaceAll("[^0-9]", "");
+
+        // Convierte prefijo internacional 00xxxx -> xxxx
+        if (cleaned.startsWith("00")) {
+            cleaned = cleaned.substring(2);
+        }
+
+        // Si tiene 10 dígitos asumimos México (52)
+        if (cleaned.length() == 10) {
+            cleaned = "52" + cleaned;
+        }
+
+        // Rechazar si fuera demasiado corto o largo
+        if (cleaned.length() < 11 || cleaned.length() > 15) {
+            return null;
+        }
+
+        return "+" + cleaned; // formato E.164
     }
 }
