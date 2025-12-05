@@ -2,8 +2,10 @@ package com.bot.elara.Domain.Model;
 
 // com.bot.elara.Domain.Model.OnboardingStep
 public enum OnboardingStep {
+    WELCOME,
     START,
-    ASK_MOTIVO, // M-1
+    ASK_PADECIMIENTO,
+    CONFIRM_PADECIMIENTO,// M-1
     ASK_EMAIL, // M-2
     CONFIRM_EMAIL, // M-3
     ASK_MAYORIA_EDAD, // M-4
@@ -41,5 +43,6 @@ public enum OnboardingStep {
     ASK_CONSENTIMIENTO, // D3 y M-11
     PROCESS_PAYMENT, // M-23
     COMPLETED,
+    ASK_EXCESO_FOTOS,
     ERROR
 }

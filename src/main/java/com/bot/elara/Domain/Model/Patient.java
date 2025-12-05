@@ -71,7 +71,7 @@ public class Patient {
     private String statusEmbarazo; // Tengo planes, Estoy embarazada, Lactando, Ninguna
 
     // === FOTOS ===
-    @ElementCollection
+    @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "patient_photos", joinColumns = @JoinColumn(name = "patient_whatsapp_id"))
     @Column(name = "photo_url")
     private List<String> photoUrls = new ArrayList<>();
@@ -86,10 +86,12 @@ public class Patient {
     // === AUDITORÍA ===
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private LocalDateTime lastImageReceivedAt;
+    private Integer pendingImageCount;
 
     // Constructor por defecto para JPA
     public Patient() {
         this.photoUrls = new ArrayList<>();
-        this.currentStep = OnboardingStep.START;
+        this.currentStep = OnboardingStep.WELCOME;
     }
 }

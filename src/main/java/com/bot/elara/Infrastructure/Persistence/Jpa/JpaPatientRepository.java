@@ -27,4 +27,9 @@ public class JpaPatientRepository implements PatientRepository {
     public Boolean existsByWhatsappId(String whatsappId) {
         return jpa.existsById(whatsappId);
     }
+
+    @Override
+    public void flush() {
+        jpa.flush();
+    }
 }
