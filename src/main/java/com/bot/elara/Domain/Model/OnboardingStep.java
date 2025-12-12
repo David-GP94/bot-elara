@@ -36,6 +36,7 @@ public enum OnboardingStep {
     // Mujeres
     ASK_STATUS_EMBARAZO, // M-33 si genero Femenino
     ASK_NOTAS_ADICIONALES, // M-19, M-32, etc. por padecimiento
+    ASK_NOTAS_ADICIONALES_DETALLES, // M-44
     ASK_FOTOS, // M-20
     ASK_MAS_FOTOS, // M-22
     ASK_TERMINOS, // Enviar D1 y preguntar M-9

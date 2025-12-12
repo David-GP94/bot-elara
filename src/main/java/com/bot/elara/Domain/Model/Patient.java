@@ -89,6 +89,8 @@ public class Patient {
     private LocalDateTime lastImageReceivedAt;
     private Integer pendingImageCount;
 
+    private Boolean pendingInactivityResponse = false;
+
     // Constructor por defecto para JPA
     public Patient() {
         this.photoUrls = new ArrayList<>();
