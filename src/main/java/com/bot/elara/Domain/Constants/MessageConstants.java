@@ -88,6 +88,8 @@ public class MessageConstants {
     public static final String M_22 = "¿Deseas cargar mas imagenes?";
     public static final List<String> M_22_OPTIONS = List.of("👎No", "👍Sí");
     public static final List<String> M_EXCESO_FOTOS_OPTIONS = List.of("✅ Continuar", "🔄 Reiniciar carga");
+    public static final String M_EXCESO_FOTOS ="⚠️Ya tienes el maximo de fotos cargadas (máximo permitido: 5).\n\n" +
+            "¿Deseas continuar con las fotos actuales o reiniciar la carga?";
 
     public static final String M_23 = "💳¡Listo! Gracias por completar tu consulta. Aquí tienes el link para realizar tu pago:";
     public static final String M_24 = "🎉Tu pago fue procesado correctamente, tu dermatóloga revisará tu caso, entra a tu cuenta para darle seguimiento.";
@@ -149,4 +151,5 @@ public class MessageConstants {
     public static final String M_41 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu rosácea?";
     public static final String M_42 = "✅ Has seleccionado: ";
     public static final String M_43 = "📝 Por favor escribe en una linea cuáles enfermedades tienes:";
+    public static final String M_44 = "📝 Por favor escribe en una linea los detalles para tu dermatólogo:";
 }

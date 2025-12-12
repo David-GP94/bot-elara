@@ -83,6 +83,26 @@ public class WhatsAppWebhookController {
                             image.setId(imageId);
                             onboardingService.processImage(from, image);
 
+                        } else if ("audio".equals(type)) {
+                            log.info("Audio recibido de {} - formato no soportado", from);
+                            onboardingService.sendUnsupportedFormatMessage(from, "audio");
+
+                        } else if ("video".equals(type)) {
+                            log.info("Video recibido de {} - formato no soportado", from);
+                            onboardingService.sendUnsupportedFormatMessage(from, "video");
+
+                        } else if ("document".equals(type)) {
+                            log.info("Documento recibido de {} - formato no soportado", from);
+                            onboardingService.sendUnsupportedFormatMessage(from, "documento");
+
+                        } else if ("sticker".equals(type)) {
+                            log.info("Sticker recibido de {} - formato no soportado", from);
+                            onboardingService.sendUnsupportedFormatMessage(from, "sticker");
+
+                        } else if ("location".equals(type)) {
+                            log.info("Ubicación recibida de {} - formato no soportado", from);
+                            onboardingService.sendUnsupportedFormatMessage(from, "ubicación");
+
                         } else {
                             log.info("Tipo de mensaje no manejado: {}", type);
                         }
