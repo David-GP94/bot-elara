@@ -18,7 +18,7 @@ spring:
         web-allow-others: true
 
   jpa:
-    database-platform: org.hibernate.dialect.H2Dialect   # ← CAMBIA ESTO (antes tenías MariaDBDialect)
+    database-platform: org.hibernate.dialect.H2Dialect
     hibernate:
       ddl-auto: update
     show-sql: true
@@ -31,6 +31,17 @@ logging:
     com.bot.elara: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql: TRACE
+
+# ===========================================================================
+# CONFIGURACIÓN COMÚN
+# ===========================================================================
+stripe:
+  price-amount: 99900  # $999.00 MXN en centavos (ajusta al monto real)
+  api-key: sk_test_51SdLpFHhJHbQdkSGFFN4vTsxfbF8mskHsd7nqj16rfFWlFX1FllKtE29VB8Wqw9OhxweukILTOy8TwHXDhNFyhIG00hgq80gon  # ← TU SECRET KEY DE TEST
+  currency: mxn
+
+app:
+  base-url: http://localhost:8080  # Default local, se sobrescribe en perfiles
 
 ---
 # PERFIL: SANDBOX (Pruebas locales)
@@ -46,6 +57,13 @@ whatsapp:
   base-url: https://graph.facebook.com/v20.0
   logo-path: classpath:static/logo-elara.jpg
 
+stripe:
+  webhook-secret: whsec_bb19ef68d809d9d6ccc1ec05fd55a0b644610c286f2bcfcc66e635be9d518b69  # ← Valor dummy solo para pruebas locales
+  # Si quieres usar el de Stripe CLI, cámbialo manualmente después de ejecutar stripe listen
+
+app:
+  base-url: http://localhost:8080  # Para success/cancel locales
+
 ---
 # PERFIL: PRODUCTION
 spring:
@@ -60,5 +78,12 @@ whatsapp:
   base-url: https://graph.facebook.com/v20.0
 
 respondio:
-  api-url: https://api.respond.io/v1  # O la versi�n exacta, e.g., /v1.3 si aplica
-  api-key: ${RESPONDIO_API_KEY}  # Inyecta desde .env o secrets
+  api-url: https://api.respond.io/v1
+  api-key: ${RESPONDIO_API_KEY}
+
+stripe:
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET}  # ← Inyecta desde variable de entorno en producción
+  # price-amount hereda el valor común de arriba
+
+app:
+  base-url: https://tu-dominio-real.com  # ← Cambia por tu dominio público (HTTPS obligatorio en prod)
