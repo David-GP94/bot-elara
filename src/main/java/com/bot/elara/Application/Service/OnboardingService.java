@@ -33,6 +33,7 @@ public class OnboardingService {
     private final S3Service s3Service;
     private final DateParserUtil dateParserUtil;
     private final InactivityReminderService inactivityReminderService;
+    private final StripeService stripeService;
 
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>> pendingResponses = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ScheduledExecutorService imageScheduler = java.util.concurrent.Executors.newScheduledThreadPool(2);
@@ -916,13 +917,36 @@ public class OnboardingService {
     private void goToPayment(Patient p) {
         p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
         save(p);
-        String link = "https://pago.tuclinica.com/pay/" + p.getWhatsappId();
+
+        String paymentUrl = stripeService.crearPaymentLink(
+                "ID-CONSULTA-UNICO", //TODO: AQUI VA EL ID DE CONSULTA UNICO DEVUELTO POR EL ENDPOINT DE CREACION DE CONSULTA
+                p.getWhatsappId(),
+                p.getEmail()
+        );
+
+        if (paymentUrl == null || paymentUrl.isBlank()) {
+            sendText(p.getWhatsappId(), "⚠️ Ocurrió un problema al generar el enlace de pago. Por favor intenta más tarde o escribe *HOLA* para reiniciar.");
+            p.setCurrentStep(OnboardingStep.WELCOME);
+            save(p);
+            return;
+        }
+
+        // Mensaje con botón grande azul
+        whatsAppClient.sendCtaUrlButton(
+                p.getWhatsappId(),
+                "¡Todo listo! 🎉\n\n" +
+                        "Solo falta realizar el pago de tu consulta dermatológica.\n\n" +
+                        "💳 Costo: $999 MXN (impuestos incluidos)\n" +
+                        "🔒 Pago 100% seguro procesado por Stripe\n\n" +
+                        "Da clic en el botón para pagar:",
+                "Pagar $999 💳",
+                paymentUrl
+        );
+
+        // Mensaje adicional (opcional) para reforzar
         sendText(p.getWhatsappId(),
-                "¡Perfecto! Ya tenemos todo.\n\n" +
-                        "Solo falta el pago de tu consulta:\n\n" +
-                        link + "\n\n" +
-                        "Costo: $650 MXN\n\n" +
-                        "Cuando pagues, escribe: *PAGADO*");
+                "Tan pronto completes el pago, recibirás automáticamente un mensaje de confirmación y el acceso a tu panel de paciente.\n\n" +
+                        "¡Gracias por confiar en Elara! 💙");
     }
 
     private void handlePayment(Patient p, String text) {
@@ -1280,5 +1304,28 @@ public class OnboardingService {
         );
 
         sendText(from, message);
+    }
+
+    /**
+     * Método público llamado desde el webhook de Stripe cuando el pago es exitoso
+     */
+    public void enviarMensajePagoExitoso(String whatsappId, String panelUrl) {
+        // Mensaje principal de texto
+        sendText(whatsappId,
+                "🎉 ¡Pago recibido correctamente!\n\n" +
+                        "Tu dermatóloga revisará tu caso en las próximas horas.\n" +
+                        "Puedes seguir el estado de tu consulta aquí:\n\n" +
+                        panelUrl + "\n\n" +
+                        "¡Gracias por confiar en Elara! 💙");
+
+        // Botón grande azul al panel (experiencia premium)
+        whatsAppClient.sendCtaUrlButton(
+                whatsappId,
+                "Accede directamente a tu panel de paciente para ver el seguimiento de tu consulta",
+                "Ir al Panel 👩‍⚕️",
+                panelUrl
+        );
+
+        log.info("Mensaje de pago exitoso enviado a {}", whatsappId);
     }
 }

@@ -307,4 +307,56 @@ public class WhatsAppCloudApiClient {
 
         return "+" + cleaned; // formato E.164
     }
+    /**
+     * Envía un mensaje con botón grande azul (CTA URL) - ideal para pagos con Stripe
+     */
+    public void sendCtaUrlButton(String to, String bodyText, String buttonDisplayText, String url) {
+        String normalized = normalizePhone(to);
+        if (normalized == null) {
+            log.error("Número inválido al enviar CTA URL: {}", to);
+            return;
+        }
+
+        // Validación básica del texto del botón (máx 20 caracteres según Meta)
+        if (buttonDisplayText == null || buttonDisplayText.trim().isEmpty() || buttonDisplayText.length() > 20) {
+            log.warn("Texto del botón CTA inválido (máx 20 chars): '{}'. Usando fallback.", buttonDisplayText);
+            buttonDisplayText = "Pagar ahora";
+        }
+
+        Map<String, Object> message = new HashMap<>();
+        message.put("messaging_product", "whatsapp");
+        message.put("to", normalized);
+        message.put("type", "interactive");
+
+        Map<String, Object> interactive = new HashMap<>();
+        interactive.put("type", "cta_url");
+
+        // Cuerpo del mensaje
+        interactive.put("body", Map.of("text", bodyText));
+
+        // Acción con el botón grande
+        Map<String, Object> action = new HashMap<>();
+        action.put("name", "cta_url");
+        action.put("parameters", Map.of(
+                "display_text", buttonDisplayText.trim(),
+                "url", url
+        ));
+        interactive.put("action", action);
+
+        message.put("interactive", interactive);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(config.getAccessToken());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        try {
+            restTemplate.postForEntity(config.getMessagesUrl(), new HttpEntity<>(message, headers), String.class);
+            log.info("Botón CTA URL enviado correctamente a {}: {} → {}", normalized, buttonDisplayText, url);
+        } catch (Exception e) {
+            log.error("Error enviando botón CTA URL a " + normalized, e);
+            // Fallback: enviar como texto normal con la URL
+            sendText(normalized, bodyText + "\n\nRealiza tu pago aquí:\n" + url);
+        }
+    }
+
 }

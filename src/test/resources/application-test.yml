@@ -13,8 +13,26 @@ spring:
       ddl-auto: create-drop
     show-sql: false
 
+# Configuración dummy de WhatsApp (ya la tenías, la completamos)
 whatsapp:
-  phone-number-id: 000000000000000
-  access-token: test-token
-  webhook-verify-token: test-token
-  base-url: http://localhost:8080
+  phone-number-id: "000000000000000"
+  access-token: "test-token"
+  webhook-verify-token: "test-token"
+  base-url: "https://graph.facebook.com/v20.0"  # ← Usa la base real de Meta
+  logo-path: "classpath:logo.jpg"
+
+# NUEVO: Propiedades obligatorias de Stripe (para que StripeService se cree)
+stripe:
+  api-key: sk_test_dummy_1234567890
+  price-amount: 99900   # $999.00 MXN en centavos
+  webhook-secret: whsec_test_dummy_secret_1234567890  # cualquier string, no se usa en tests reales
+
+# NUEVO: base-url para success/cancel URLs en StripeService
+app:
+  base-url: https://localhost:8080
+
+# Opcional: si usas logging específico o otras configs
+logging:
+  level:
+    com.bot.elara: DEBUG
+    org.springframework: WARN
