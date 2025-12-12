@@ -23,6 +23,7 @@ whatsapp:
 
 # NUEVO: Propiedades obligatorias de Stripe (para que StripeService se cree)
 stripe:
+  api-key: sk_test_dummy_1234567890
   price-amount: 99900   # $999.00 MXN en centavos
   webhook-secret: whsec_test_dummy_secret_1234567890  # cualquier string, no se usa en tests reales
 

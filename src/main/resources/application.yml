@@ -37,7 +37,7 @@ logging:
 # ===========================================================================
 stripe:
   price-amount: 99900  # $999.00 MXN en centavos (ajusta al monto real)
-  api-key: sk_test_51SdLpFHhJHbQdkSGFFN4vTsxfbF8mskHsd7nqj16rfFWlFX1FllKtE29VB8Wqw9OhxweukILTOy8TwHXDhNFyhIG00hgq80gon  # ← TU SECRET KEY DE TEST
+  api-key: ${STRIPE_API_KEY}  # ← TU SECRET KEY DE TEST
   currency: mxn
 
 app:
@@ -58,7 +58,7 @@ whatsapp:
   logo-path: classpath:static/logo-elara.jpg
 
 stripe:
-  webhook-secret: whsec_bb19ef68d809d9d6ccc1ec05fd55a0b644610c286f2bcfcc66e635be9d518b69  # ← Valor dummy solo para pruebas locales
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET}  # ← Valor dummy solo para pruebas locales
   # Si quieres usar el de Stripe CLI, cámbialo manualmente después de ejecutar stripe listen
 
 app:
