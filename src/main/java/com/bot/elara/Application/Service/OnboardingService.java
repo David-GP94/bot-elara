@@ -34,6 +34,7 @@ public class OnboardingService {
     private final DateParserUtil dateParserUtil;
     private final InactivityReminderService inactivityReminderService;
     private final StripeService stripeService;
+    private final MercadoPagoService mercadoPagoService;
 
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>> pendingResponses = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ScheduledExecutorService imageScheduler = java.util.concurrent.Executors.newScheduledThreadPool(2);
@@ -48,6 +49,8 @@ public class OnboardingService {
     private static final String TERMINOS_URL = "https://tu-dominio.com/docs/terminos-y-condiciones.pdf";
     private static final String AVISO_PRIVACIDAD_URL = "https://tu-dominio.com/docs/aviso-de-privacidad.pdf";
     private static final String CONSENTIMIENTO_URL = "https://tu-dominio.com/docs/consentimiento-telemedicina.pdf";
+
+
 
     // Método para programar el recordatorio
     private void scheduleInactivityReminder(String whatsappId) {
@@ -948,6 +951,42 @@ public class OnboardingService {
                 "Tan pronto completes el pago, recibirás automáticamente un mensaje de confirmación y el acceso a tu panel de paciente.\n\n" +
                         "¡Gracias por confiar en Elara! 💙");
     }
+
+    private void goToPaymentMercadoPago(Patient p) {
+        p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
+        save(p);
+
+        String paymentUrl = mercadoPagoService.crearPaymentLink(
+                "ID-CONSULTA-UNICO", //TODO: AQUI VA EL ID DE CONSULTA UNICO
+                p.getWhatsappId(),
+                p.getEmail()
+        );
+
+        if (paymentUrl == null || paymentUrl.isBlank()) {
+            sendText(p.getWhatsappId(), "⚠️ Ocurrió un problema al generar el enlace de pago. Por favor intenta más tarde o escribe *HOLA* para reiniciar.");
+            p.setCurrentStep(OnboardingStep.WELCOME);
+            save(p);
+            return;
+        }
+
+        // Mensaje con botón grande azul
+        whatsAppClient.sendCtaUrlButton(
+                p.getWhatsappId(),
+                "¡Todo listo! 🎉\n\n" +
+                        "Solo falta realizar el pago de tu consulta dermatológica.\n\n" +
+                        "💳 Costo: $999 MXN (impuestos incluidos)\n" +
+                        "🔒 Pago 100% seguro procesado por MercadoPago\n\n" +
+                        "Da clic en el botón para pagar:",
+                "Pagar $999 💳",
+                paymentUrl
+        );
+
+        // Mensaje adicional
+        sendText(p.getWhatsappId(),
+                "Tan pronto completes el pago, recibirás automáticamente un mensaje de confirmación y el acceso a tu panel de paciente.\n\n" +
+                        "¡Gracias por confiar en Elara! 💙");
+    }
+
 
     private void handlePayment(Patient p, String text) {
         if (!text.equalsIgnoreCase("PAGADO")) {
