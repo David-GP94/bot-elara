@@ -7,6 +7,7 @@ spring:
 
   datasource:
     url: jdbc:h2:file:./data/derma_onboarding;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false;CASE_INSENSITIVE_IDENTIFIERS=true;MODE=MariaDB
+    #url: jdbc:h2:file:/app/data/derma_onboarding;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false;CASE_INSENSITIVE_IDENTIFIERS=true;MODE=MySQL
     username: sa
     password:
 
@@ -40,9 +41,21 @@ stripe:
   api-key: ${STRIPE_API_KEY}  # ← TU SECRET KEY DE TEST
   currency: mxn
 
+# MERCADOPAGO - CONFIGURACIÓN BASE
+mercadopago:
+  api:
+    url: https://api.mercadopago.com
+  access:
+    token: ${MERCADOPAGO_ACCESS_TOKEN:TEST-7902613642269998-101611-adb6650f6b6ae95de9678decd61c4ddc-2911743713}
+  public:
+    key:  ${MERCADOPAGO_PUBLIC_KEY:TEST-2ccea0bc-ed01-433e-af2e-c85c40353fc0}
+  notification:
+    url: ${MERCADOPAGO_WEBHOOK_URL:https://su-subfalcial-eulalia.ngrok-free.dev}
+  price-amount: 99900
+  currency: MXN
+
 app:
   base-url: http://localhost:8080  # Default local, se sobrescribe en perfiles
-
 ---
 # PERFIL: SANDBOX (Pruebas locales)
 spring:
@@ -84,6 +97,5 @@ respondio:
 stripe:
   webhook-secret: ${STRIPE_WEBHOOK_SECRET}  # ← Inyecta desde variable de entorno en producción
   # price-amount hereda el valor común de arriba
-
 app:
   base-url: https://tu-dominio-real.com  # ← Cambia por tu dominio público (HTTPS obligatorio en prod)
