@@ -34,6 +34,7 @@ public class OnboardingService {
     private final DateParserUtil dateParserUtil;
     private final InactivityReminderService inactivityReminderService;
     private final StripeService stripeService;
+    private final MercadoPagoService mercadoPagoService;
 
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>> pendingResponses = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ScheduledExecutorService imageScheduler = java.util.concurrent.Executors.newScheduledThreadPool(2);
@@ -42,12 +43,14 @@ public class OnboardingService {
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>> inactivityReminders = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ScheduledExecutorService reminderScheduler = java.util.concurrent.Executors.newScheduledThreadPool(2);
 
-    private static final long INACTIVITY_TIMEOUT_MINUTES = 1; // Configurable
+    private static final long INACTIVITY_TIMEOUT_MINUTES = 10; // Configurable
 
     // URLs reales de tus documentos (ponlas en S3 o en tu dominio)
     private static final String TERMINOS_URL = "https://tu-dominio.com/docs/terminos-y-condiciones.pdf";
     private static final String AVISO_PRIVACIDAD_URL = "https://tu-dominio.com/docs/aviso-de-privacidad.pdf";
     private static final String CONSENTIMIENTO_URL = "https://tu-dominio.com/docs/consentimiento-telemedicina.pdf";
+
+
 
     // Método para programar el recordatorio
     private void scheduleInactivityReminder(String whatsappId) {
@@ -146,7 +149,17 @@ public class OnboardingService {
             case ASK_TERMINOS -> handleTerminos(patient, text);
             case ASK_AVISO_PRIVACIDAD -> handleAvisoPrivacidad(patient, text);
             case ASK_CONSENTIMIENTO -> handleConsentimiento(patient, text);
-            case PROCESS_PAYMENT -> handlePayment(patient, text);
+            case PROCESS_PAYMENT -> {
+                // Mensaje de espera mientras el webhook confirma
+                sendText(from,
+                        "⏳ Tu pago está siendo procesado...\n\n" +
+                                "Te avisaremos automáticamente cuando sea confirmado.\n" +
+                                "No es necesario escribir nada más.\n\n" +
+                                "¡Gracias por tu paciencia! 💙");
+            }
+            case ASK_METODO_PAGO -> handleMetodoPago(patient, text);
+            case ASK_CODIGO_DESCUENTO -> handleCodigoDescuento(patient, text);
+            case ASK_INGRESAR_CODIGO -> handleIngresarCodigo(patient, text);
             case COMPLETED ->
                     sendText(from, "¡Tu consulta ya está completada! Tu dermatóloga la revisará pronto. Te avisaremos cuando esté lista.");
             default -> sendText(from, "Algo salió mal. Escribe *HOLA* para reiniciar el proceso.");
@@ -213,9 +226,44 @@ public class OnboardingService {
                     askWithButtons(p, OnboardingStep.ASK_NOTAS_ADICIONALES, getNotasMessage(p.getPadecimiento()), M_15_OPTIONS);
             case ASK_NOTAS_ADICIONALES_DETALLES -> askWithText(p, OnboardingStep.ASK_NOTAS_ADICIONALES_DETALLES, M_44);
             case ASK_FOTOS -> askWithButtons(p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
-            case ASK_EXCESO_FOTOS -> askWithButtons(p, OnboardingStep.ASK_EXCESO_FOTOS, M_EXCESO_FOTOS, M_EXCESO_FOTOS_OPTIONS);
+            case ASK_EXCESO_FOTOS ->
+                    askWithButtons(p, OnboardingStep.ASK_EXCESO_FOTOS, M_EXCESO_FOTOS, M_EXCESO_FOTOS_OPTIONS);
             case ASK_MAS_FOTOS -> sendText(from, M_21);
-            case PROCESS_PAYMENT -> sendText(from, "Por favor realiza el pago y escribe *PAGADO* cuando termines.");
+            case PROCESS_PAYMENT -> {
+                // Reenviamos el enlace del método que eligió
+                if (p.getMetodoPagoElegido() != null && p.getMetodoPagoElegido() == 1) {
+                    goToStripePayment(p);
+                } else if (p.getMetodoPagoElegido() != null && p.getMetodoPagoElegido() == 2) {
+                    goToPaymentMercadoPago(p);
+                } else {
+                    // Seguridad: si por algún motivo no sabe el método, volvemos al menú
+                    askWithListSection(
+                            p,
+                            OnboardingStep.ASK_METODO_PAGO,
+                            "⏰ ¡Hola de nuevo!\n\nEstábamos eligiendo el método de pago.\n\n¿En cuál prefieres pagar?",
+                            "Elegir método de pago",
+                            "Seleccionar",
+                            M_METODO_PAGO_OPTIONS,
+                            "metodo_pago"
+                    );
+                }
+            }
+            case ASK_METODO_PAGO -> {
+                askWithListSection(
+                        p,
+                        OnboardingStep.ASK_METODO_PAGO,
+                        "¡Perfecto! Ya tenemos tus fotos \n\nElige tu método de pago preferido:",
+                        "Elegir método de pago",
+                        "Seleccionar",
+                        M_METODO_PAGO_OPTIONS,
+                        "metodo_pago"
+                );
+            }
+            case ASK_CODIGO_DESCUENTO ->
+                    askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
+
+            case ASK_INGRESAR_CODIGO ->
+                    askWithText(p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
             default -> sendText(from, "Continuemos donde te quedaste. ¿En qué puedo ayudarte?");
         }
     }
@@ -871,7 +919,15 @@ public class OnboardingService {
             save(p);
             sendText(p.getWhatsappId(), M_21);
         } else {
-            goToPayment(p);
+            askWithListSection(
+                    p,
+                    OnboardingStep.ASK_METODO_PAGO,
+                    "¡Perfecto! Ya tenemos todo listo \n\nElige tu método de pago preferido:",
+                    "Elegir método de pago",
+                    "Seleccionar",
+                    M_METODO_PAGO_OPTIONS,
+                    "metodo_pago"
+            );
         }
     }
 
@@ -884,7 +940,15 @@ public class OnboardingService {
         if ("Sí".equalsIgnoreCase(selected)) {
             sendText(p.getWhatsappId(), M_21);
         } else {
-            goToPayment(p);
+            askWithListSection(
+                    p,
+                    OnboardingStep.ASK_METODO_PAGO,
+                    "¡Perfecto! Ya tenemos todo listo \n\nElige tu método de pago preferido:",
+                    "Elegir método de pago",
+                    "Seleccionar",
+                    M_METODO_PAGO_OPTIONS,
+                    "metodo_pago"
+            );
         }
     }
 
@@ -896,30 +960,141 @@ public class OnboardingService {
         }
 
         if (selected.equalsIgnoreCase("Continuar")) {
-            // Continuar al pago con las 5 fotos actuales
-            int totalFotos = p.getPhotoUrls().size();
-            sendText(p.getWhatsappId(),
-                    String.format("✅Excelente, se han guardado %d imagen(es) correctamente.\n\nProcedemos al pago.",
-                            totalFotos, totalFotos));
-            goToPayment(p);
+            askWithListSection(
+                    p,
+                    OnboardingStep.ASK_METODO_PAGO,
+                    "¡Excelente! Ya guardamos tus 5 fotos \n\nElige tu método de pago preferido:",
+                    "Elegir método de pago",
+                    "Seleccionar",
+                    M_METODO_PAGO_OPTIONS,
+                    "metodo_pago"
+            );
         } else {
-            // Reiniciar carga - limpiar fotos y volver a pedir
             p.getPhotoUrls().clear();
             p.setLastImageReceivedAt(null);
             p.setCurrentStep(OnboardingStep.ASK_MAS_FOTOS);
             save(p);
-            sendText(p.getWhatsappId(),
-                    "🔄 Se han eliminado todas las fotos.\n\n" + M_21);
+            sendText(p.getWhatsappId(), "🔄 Se han eliminado todas las fotos.\n\n" + M_21);
         }
     }
 
+    private void handleMetodoPago(Patient p, String text) {
+        String selected = getSelectedOption(text, M_METODO_PAGO_OPTIONS);
+        log.info("Seleccion de metodo de pago: "+selected);
+        if (selected == null) {
+            invalidOption(p);
+            return;
+        }
 
-    private void goToPayment(Patient p) {
+        // Guardamos el método elegido
+        if (selected.contains("Stripe")) {
+            p.setMetodoPagoElegido(1); // 1 = Stripe
+        } else {
+            p.setMetodoPagoElegido(2); // 2 = Mercado Pago
+        }
+        save(p);
+
+        // AVANZAMOS AL PASO DE CÓDIGO DE DESCUENTO
+        askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
+    }
+
+    private void handleCodigoDescuento(Patient p, String text) {
+        String selected = getSelectedOption(text, M_CODIGO_DESCUENTO_OPTIONS);
+        if (selected == null) {
+            invalidOption(p);
+            return;
+        }
+
+        if ("Sí".equalsIgnoreCase(selected)) {
+            // Pide el código
+            askWithText(p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
+        } else {
+            // No tiene → directo al pago
+            procederAlPago(p);
+        }
+    }
+
+    private void handleIngresarCodigo(Patient p, String text) {
+        String codigo = text.trim().toUpperCase();
+
+        // POR AHORA: solo guardamos (futuro: validar con backend)
+        p.setCodigoDescuento(codigo);
+        save(p);
+
+        sendText(p.getWhatsappId(),
+                "¡Código recibido: " + codigo + "!\n\n" +
+                        "Lo aplicaremos en tu pago (próximamente). Procedemos al pago...");
+
+        // Siempre avanza al pago, aunque no valide el código aún
+        procederAlPago(p);
+    }
+
+    // MÉTODO COMÚN PARA IR AL PAGO SEGÚN MÉTODO ELEGIDO
+    private void procederAlPago(Patient p) {
+        if (p.getMetodoPagoElegido() == 1) {
+            goToStripePayment(p);
+        } else if (p.getMetodoPagoElegido() == 2) {
+            goToPaymentMercadoPago(p);
+        } else {
+            // Seguridad
+            sendText(p.getWhatsappId(), "Hubo un problema con el método de pago. Escribe *HOLA* para reiniciar.");
+            p.setCurrentStep(OnboardingStep.WELCOME);
+            save(p);
+        }
+    }
+
+    private void goToStripePayment(Patient p) {
+        String paymentUrl;
+
+        // REUTILIZAR SI YA EXISTE
+        if (p.getPaymentUrl() != null && !p.getPaymentUrl().isBlank()) {
+            paymentUrl = p.getPaymentUrl();
+            log.info("Reutilizando URL de pago existente para {}: {}", p.getWhatsappId(), paymentUrl);
+        } else {
+            // CREAR NUEVA Y GUARDARLA
+            paymentUrl = stripeService.crearPaymentLink(
+                    "CONSULTA-" + p.getWhatsappId(),
+                    p.getWhatsappId(),
+                    p.getEmail()
+            );
+
+            if (paymentUrl == null || paymentUrl.isBlank()) {
+                sendText(p.getWhatsappId(), "⚠️ Problema al generar el pago con Stripe. Intenta más tarde o escribe *HOLA*.");
+                p.setCurrentStep(OnboardingStep.WELCOME);
+                save(p);
+                return;
+            }
+
+            p.setPaymentUrl(paymentUrl);
+            save(p);
+            log.info("Nueva URL de pago generada y guardada para {}: {}", p.getWhatsappId(), paymentUrl);
+        }
+
         p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
         save(p);
 
-        String paymentUrl = stripeService.crearPaymentLink(
-                "ID-CONSULTA-UNICO", //TODO: AQUI VA EL ID DE CONSULTA UNICO DEVUELTO POR EL ENDPOINT DE CREACION DE CONSULTA
+        // Mensaje con botón grande
+        whatsAppClient.sendCtaUrlButton(
+                p.getWhatsappId(),
+                "💳 Pago con tarjeta (Stripe)\n\n" +
+                        "Costo: $999 MXN\n" +
+                        "Seguro y rápido\n\n" +
+                        "Da clic para pagar:",
+                "Pagar con Tarjeta 💳",
+                paymentUrl
+        );
+
+        sendText(p.getWhatsappId(),
+                "Cuando completes el pago, escribe *PAGADO* para confirmar.\n\n" +
+                        "¡Gracias por confiar en Elara! 💙");
+    }
+
+    private void goToPaymentMercadoPago(Patient p) {
+        p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
+        save(p);
+
+        String paymentUrl = mercadoPagoService.crearPaymentLink(
+                "ID-CONSULTA-UNICO", //TODO: AQUI VA EL ID DE CONSULTA UNICO
                 p.getWhatsappId(),
                 p.getEmail()
         );
@@ -937,17 +1112,18 @@ public class OnboardingService {
                 "¡Todo listo! 🎉\n\n" +
                         "Solo falta realizar el pago de tu consulta dermatológica.\n\n" +
                         "💳 Costo: $999 MXN (impuestos incluidos)\n" +
-                        "🔒 Pago 100% seguro procesado por Stripe\n\n" +
+                        "🔒 Pago 100% seguro procesado por MercadoPago\n\n" +
                         "Da clic en el botón para pagar:",
                 "Pagar $999 💳",
                 paymentUrl
         );
 
-        // Mensaje adicional (opcional) para reforzar
+        // Mensaje adicional
         sendText(p.getWhatsappId(),
                 "Tan pronto completes el pago, recibirás automáticamente un mensaje de confirmación y el acceso a tu panel de paciente.\n\n" +
                         "¡Gracias por confiar en Elara! 💙");
     }
+
 
     private void handlePayment(Patient p, String text) {
         if (!text.equalsIgnoreCase("PAGADO")) {
@@ -1232,6 +1408,53 @@ public class OnboardingService {
         );
     }
 
+    private void askWithListSection(
+            Patient p,
+            OnboardingStep nextStep,
+            String bodyText,
+            String sectionTitle,
+            String buttonText,
+            List<String> options,
+            String contextKey
+    ) {
+        p.setCurrentStep(nextStep);
+        p.setLastListContext(contextKey);
+        save(p);
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (int i = 0; i < options.size(); i++) {
+            Map<String, String> row = new HashMap<>();
+            row.put("id", contextKey + "_" + (i + 1));
+            row.put("title", options.get(i));
+            row.put("description", "");
+            rows.add(row);
+        }
+
+        for (String opt : options) {
+            if (opt.length() > 24) {
+                log.error("OPCIÓN DEMASIADO LARGA: {}", opt);
+                sendText(p.getWhatsappId(), "Error temporal. Escribe *HOLA*");
+                return;
+            }
+        }
+
+        Map<String, Object> section = new HashMap<>();
+        section.put("title", sectionTitle);
+        section.put("rows", rows);
+
+        List<Map<String, Object>> sections = new ArrayList<>();
+        sections.add(section);
+
+        // ← LLAMADA AL MÉTODO CON NOMBRE NUEVO
+        whatsAppClient.sendListMessageWithSections(
+                p.getWhatsappId(),
+                "Método de pago",
+                bodyText,
+                buttonText,
+                sections
+        );
+    }
+
     // ==== NUEVO: devuelve las opciones según el contexto ====
     private List<String> getOptionsForContext(String context) {
         return switch (context) {
@@ -1250,6 +1473,9 @@ public class OnboardingService {
             case "gravedad_acne" -> M_12_OPTIONS;
             case "gravedad_manchas" -> M_37_OPTIONS;
             case "gravedad_rosacea" -> M_40_OPTIONS;
+
+            // ← NUEVO CASE PARA MÉTODO DE PAGO
+            case "metodo_pago" -> M_METODO_PAGO_OPTIONS;
 
             default -> {
                 log.warn("Contexto de lista desconocido: {}", context);

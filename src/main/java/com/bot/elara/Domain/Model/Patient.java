@@ -82,6 +82,9 @@ public class Patient {
     // === PAGO Y ESTADO ===
     private Boolean pagoProcesado;
     private String pagoId; // ID del pago en Stripe, Mercado Pago, etc.
+    private Integer metodoPagoElegido;
+    private String paymentUrl;
+    private String codigoDescuento;
 
     // === AUDITORÍA ===
     private LocalDateTime createdAt;
@@ -90,6 +93,7 @@ public class Patient {
     private Integer pendingImageCount;
 
     private Boolean pendingInactivityResponse = false;
+
 
     // Constructor por defecto para JPA
     public Patient() {
