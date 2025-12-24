@@ -45,5 +45,8 @@ public enum OnboardingStep {
     PROCESS_PAYMENT, // M-23
     COMPLETED,
     ASK_EXCESO_FOTOS,
+    ASK_METODO_PAGO,
+    ASK_CODIGO_DESCUENTO,
+    ASK_INGRESAR_CODIGO,
     ERROR
 }

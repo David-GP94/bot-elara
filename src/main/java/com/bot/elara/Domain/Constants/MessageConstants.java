@@ -152,4 +152,17 @@ public class MessageConstants {
     public static final String M_42 = "✅ Has seleccionado: ";
     public static final String M_43 = "📝 Por favor escribe en una linea cuáles enfermedades tienes:";
     public static final String M_44 = "📝 Por favor escribe en una linea los detalles para tu dermatólogo:";
+
+    public static final String M_METODO_PAGO = "¡Perfecto! Ya tenemos tus fotos \n\n" +
+            "Ahora elige tu método de pago preferido:";
+
+    public static final List<String> M_METODO_PAGO_OPTIONS = List.of(
+            "💳Stripe",
+            "🛍️Mercado Pago"
+    );
+    public static final String M_CODIGO_DESCUENTO = "¡Excelente elección! \n\n🏷️¿Tienes un código de descuento o promoción?";
+
+    public static final List<String> M_CODIGO_DESCUENTO_OPTIONS = List.of("👎No", "👍Sí");
+
+    public static final String M_INGRESAR_CODIGO = "📝Perfecto, por favor escribe tu código de descuento:";
 }

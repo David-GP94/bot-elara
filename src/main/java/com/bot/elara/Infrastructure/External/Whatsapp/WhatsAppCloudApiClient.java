@@ -190,6 +190,53 @@ public class WhatsAppCloudApiClient {
         }
     }
 
+    public void sendListMessageWithSections(
+            String to,
+            String headerText,
+            String bodyText,
+            String buttonText,
+            List<Map<String, Object>> sections
+    ) {
+        String normalized = normalizePhone(to);
+        if (normalized == null) {
+            log.error("Número inválido: {}", to);
+            return;
+        }
+
+        Map<String, Object> message = new HashMap<>();
+        message.put("messaging_product", "whatsapp");
+        message.put("to", normalized);
+        message.put("type", "interactive");
+
+        Map<String, Object> interactive = new HashMap<>();
+        interactive.put("type", "list");
+
+        if (headerText != null && !headerText.isBlank()) {
+            interactive.put("header", Map.of("type", "text", "text", headerText));
+        }
+
+        interactive.put("body", Map.of("text", bodyText));
+
+        Map<String, Object> action = new HashMap<>();
+        action.put("button", buttonText);
+        action.put("sections", sections);
+        interactive.put("action", action);
+
+        message.put("interactive", interactive);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(config.getAccessToken());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        try {
+            restTemplate.postForEntity(config.getMessagesUrl(), new HttpEntity<>(message, headers), String.class);
+            log.info("List message con secciones enviado a {}", normalized);
+        } catch (Exception e) {
+            log.error("Error enviando list message con secciones a " + normalized, e);
+            sendText(normalized, "Error mostrando opciones. Escribe *HOLA* para reiniciar.");
+        }
+    }
+
     public String getLogoMediaId() {
         if (cachedLogoMediaId != null) {
             return cachedLogoMediaId;
