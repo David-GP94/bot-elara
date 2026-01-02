@@ -3,6 +3,7 @@ package com.bot.elara.Application.Service;
 import com.bot.elara.Domain.Model.OnboardingStep;
 import com.bot.elara.Domain.Model.Patient;
 import com.bot.elara.Domain.Repository.PatientRepository;
+import com.bot.elara.Infrastructure.External.Clients.ElaraApi.ElaraApiPatientClient;
 import com.bot.elara.Infrastructure.External.Storage.S3Service;
 import com.bot.elara.Infrastructure.External.Whatsapp.Model.Image;
 import com.bot.elara.Infrastructure.External.Whatsapp.WhatsAppCloudApiClient;
@@ -35,6 +36,9 @@ public class OnboardingService {
     private final InactivityReminderService inactivityReminderService;
     private final StripeService stripeService;
     private final MercadoPagoService mercadoPagoService;
+    
+    // Feign Clients para API externa de Elara
+    private final com.bot.elara.Infrastructure.External.Clients.ElaraApi.ElaraApiPatientClient elaraPatientClient;
 
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>> pendingResponses = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ScheduledExecutorService imageScheduler = java.util.concurrent.Executors.newScheduledThreadPool(2);
@@ -43,14 +47,12 @@ public class OnboardingService {
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<?>> inactivityReminders = new java.util.concurrent.ConcurrentHashMap<>();
     private final java.util.concurrent.ScheduledExecutorService reminderScheduler = java.util.concurrent.Executors.newScheduledThreadPool(2);
 
-    private static final long INACTIVITY_TIMEOUT_MINUTES = 10; // Configurable
+    private static final long INACTIVITY_TIMEOUT_MINUTES = 1; // Configurable
 
     // URLs reales de tus documentos (ponlas en S3 o en tu dominio)
     private static final String TERMINOS_URL = "https://tu-dominio.com/docs/terminos-y-condiciones.pdf";
     private static final String AVISO_PRIVACIDAD_URL = "https://tu-dominio.com/docs/aviso-de-privacidad.pdf";
     private static final String CONSENTIMIENTO_URL = "https://tu-dominio.com/docs/consentimiento-telemedicina.pdf";
-
-
 
     // Método para programar el recordatorio
     private void scheduleInactivityReminder(String whatsappId) {
@@ -149,17 +151,7 @@ public class OnboardingService {
             case ASK_TERMINOS -> handleTerminos(patient, text);
             case ASK_AVISO_PRIVACIDAD -> handleAvisoPrivacidad(patient, text);
             case ASK_CONSENTIMIENTO -> handleConsentimiento(patient, text);
-            case PROCESS_PAYMENT -> {
-                // Mensaje de espera mientras el webhook confirma
-                sendText(from,
-                        "⏳ Tu pago está siendo procesado...\n\n" +
-                                "Te avisaremos automáticamente cuando sea confirmado.\n" +
-                                "No es necesario escribir nada más.\n\n" +
-                                "¡Gracias por tu paciencia! 💙");
-            }
-            case ASK_METODO_PAGO -> handleMetodoPago(patient, text);
-            case ASK_CODIGO_DESCUENTO -> handleCodigoDescuento(patient, text);
-            case ASK_INGRESAR_CODIGO -> handleIngresarCodigo(patient, text);
+            case PROCESS_PAYMENT -> handlePayment(patient, text);
             case COMPLETED ->
                     sendText(from, "¡Tu consulta ya está completada! Tu dermatóloga la revisará pronto. Te avisaremos cuando esté lista.");
             default -> sendText(from, "Algo salió mal. Escribe *HOLA* para reiniciar el proceso.");
@@ -226,44 +218,9 @@ public class OnboardingService {
                     askWithButtons(p, OnboardingStep.ASK_NOTAS_ADICIONALES, getNotasMessage(p.getPadecimiento()), M_15_OPTIONS);
             case ASK_NOTAS_ADICIONALES_DETALLES -> askWithText(p, OnboardingStep.ASK_NOTAS_ADICIONALES_DETALLES, M_44);
             case ASK_FOTOS -> askWithButtons(p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
-            case ASK_EXCESO_FOTOS ->
-                    askWithButtons(p, OnboardingStep.ASK_EXCESO_FOTOS, M_EXCESO_FOTOS, M_EXCESO_FOTOS_OPTIONS);
+            case ASK_EXCESO_FOTOS -> askWithButtons(p, OnboardingStep.ASK_EXCESO_FOTOS, M_EXCESO_FOTOS, M_EXCESO_FOTOS_OPTIONS);
             case ASK_MAS_FOTOS -> sendText(from, M_21);
-            case PROCESS_PAYMENT -> {
-                // Reenviamos el enlace del método que eligió
-                if (p.getMetodoPagoElegido() != null && p.getMetodoPagoElegido() == 1) {
-                    goToStripePayment(p);
-                } else if (p.getMetodoPagoElegido() != null && p.getMetodoPagoElegido() == 2) {
-                    goToPaymentMercadoPago(p);
-                } else {
-                    // Seguridad: si por algún motivo no sabe el método, volvemos al menú
-                    askWithListSection(
-                            p,
-                            OnboardingStep.ASK_METODO_PAGO,
-                            "⏰ ¡Hola de nuevo!\n\nEstábamos eligiendo el método de pago.\n\n¿En cuál prefieres pagar?",
-                            "Elegir método de pago",
-                            "Seleccionar",
-                            M_METODO_PAGO_OPTIONS,
-                            "metodo_pago"
-                    );
-                }
-            }
-            case ASK_METODO_PAGO -> {
-                askWithListSection(
-                        p,
-                        OnboardingStep.ASK_METODO_PAGO,
-                        "¡Perfecto! Ya tenemos tus fotos \n\nElige tu método de pago preferido:",
-                        "Elegir método de pago",
-                        "Seleccionar",
-                        M_METODO_PAGO_OPTIONS,
-                        "metodo_pago"
-                );
-            }
-            case ASK_CODIGO_DESCUENTO ->
-                    askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
-
-            case ASK_INGRESAR_CODIGO ->
-                    askWithText(p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
+            case PROCESS_PAYMENT -> sendText(from, "Por favor realiza el pago y escribe *PAGADO* cuando termines.");
             default -> sendText(from, "Continuemos donde te quedaste. ¿En qué puedo ayudarte?");
         }
     }
@@ -919,15 +876,7 @@ public class OnboardingService {
             save(p);
             sendText(p.getWhatsappId(), M_21);
         } else {
-            askWithListSection(
-                    p,
-                    OnboardingStep.ASK_METODO_PAGO,
-                    "¡Perfecto! Ya tenemos todo listo \n\nElige tu método de pago preferido:",
-                    "Elegir método de pago",
-                    "Seleccionar",
-                    M_METODO_PAGO_OPTIONS,
-                    "metodo_pago"
-            );
+            goToPayment(p);
         }
     }
 
@@ -940,15 +889,7 @@ public class OnboardingService {
         if ("Sí".equalsIgnoreCase(selected)) {
             sendText(p.getWhatsappId(), M_21);
         } else {
-            askWithListSection(
-                    p,
-                    OnboardingStep.ASK_METODO_PAGO,
-                    "¡Perfecto! Ya tenemos todo listo \n\nElige tu método de pago preferido:",
-                    "Elegir método de pago",
-                    "Seleccionar",
-                    M_METODO_PAGO_OPTIONS,
-                    "metodo_pago"
-            );
+            goToPayment(p);
         }
     }
 
@@ -960,141 +901,70 @@ public class OnboardingService {
         }
 
         if (selected.equalsIgnoreCase("Continuar")) {
-            askWithListSection(
-                    p,
-                    OnboardingStep.ASK_METODO_PAGO,
-                    "¡Excelente! Ya guardamos tus 5 fotos \n\nElige tu método de pago preferido:",
-                    "Elegir método de pago",
-                    "Seleccionar",
-                    M_METODO_PAGO_OPTIONS,
-                    "metodo_pago"
-            );
+            // Continuar al pago con las 5 fotos actuales
+            int totalFotos = p.getPhotoUrls().size();
+            sendText(p.getWhatsappId(),
+                    String.format("✅Excelente, se han guardado %d imagen(es) correctamente.\n\nProcedemos al pago.",
+                            totalFotos, totalFotos));
+            goToPayment(p);
         } else {
+            // Reiniciar carga - limpiar fotos y volver a pedir
             p.getPhotoUrls().clear();
             p.setLastImageReceivedAt(null);
             p.setCurrentStep(OnboardingStep.ASK_MAS_FOTOS);
             save(p);
-            sendText(p.getWhatsappId(), "🔄 Se han eliminado todas las fotos.\n\n" + M_21);
+            sendText(p.getWhatsappId(),
+                    "🔄 Se han eliminado todas las fotos.\n\n" + M_21);
         }
     }
 
-    private void handleMetodoPago(Patient p, String text) {
-        String selected = getSelectedOption(text, M_METODO_PAGO_OPTIONS);
-        log.info("Seleccion de metodo de pago: "+selected);
-        if (selected == null) {
-            invalidOption(p);
-            return;
-        }
 
-        // Guardamos el método elegido
-        if (selected.contains("Stripe")) {
-            p.setMetodoPagoElegido(1); // 1 = Stripe
-        } else {
-            p.setMetodoPagoElegido(2); // 2 = Mercado Pago
-        }
+    private void goToPayment(Patient p) {
+        p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
         save(p);
 
-        // AVANZAMOS AL PASO DE CÓDIGO DE DESCUENTO
-        askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
-    }
-
-    private void handleCodigoDescuento(Patient p, String text) {
-        String selected = getSelectedOption(text, M_CODIGO_DESCUENTO_OPTIONS);
-        if (selected == null) {
-            invalidOption(p);
-            return;
-        }
-
-        if ("Sí".equalsIgnoreCase(selected)) {
-            // Pide el código
-            askWithText(p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
-        } else {
-            // No tiene → directo al pago
-            procederAlPago(p);
-        }
-    }
-
-    private void handleIngresarCodigo(Patient p, String text) {
-        String codigo = text.trim().toUpperCase();
-
-        // POR AHORA: solo guardamos (futuro: validar con backend)
-        p.setCodigoDescuento(codigo);
-        save(p);
-
-        sendText(p.getWhatsappId(),
-                "¡Código recibido: " + codigo + "!\n\n" +
-                        "Lo aplicaremos en tu pago (próximamente). Procedemos al pago...");
-
-        // Siempre avanza al pago, aunque no valide el código aún
-        procederAlPago(p);
-    }
-
-    // MÉTODO COMÚN PARA IR AL PAGO SEGÚN MÉTODO ELEGIDO
-    private void procederAlPago(Patient p) {
-        if (p.getMetodoPagoElegido() == 1) {
-            goToStripePayment(p);
-        } else if (p.getMetodoPagoElegido() == 2) {
-            goToPaymentMercadoPago(p);
-        } else {
-            // Seguridad
-            sendText(p.getWhatsappId(), "Hubo un problema con el método de pago. Escribe *HOLA* para reiniciar.");
-            p.setCurrentStep(OnboardingStep.WELCOME);
-            save(p);
-        }
-    }
-
-    private void goToStripePayment(Patient p) {
-        String paymentUrl;
-
-        // REUTILIZAR SI YA EXISTE
-        if (p.getPaymentUrl() != null && !p.getPaymentUrl().isBlank()) {
-            paymentUrl = p.getPaymentUrl();
-            log.info("Reutilizando URL de pago existente para {}: {}", p.getWhatsappId(), paymentUrl);
-        } else {
-            // CREAR NUEVA Y GUARDARLA
-            paymentUrl = stripeService.crearPaymentLink(
-                    "CONSULTA-" + p.getWhatsappId(),
-                    p.getWhatsappId(),
-                    p.getEmail()
+        // ========== INTEGRACIÓN CON API EXTERNA ==========
+        log.info("🔗 Iniciando integración con API externa de Elara...");
+        
+        // 1. Registrar la consulta completa en la API
+        String consultId = registrarConsultaEnApiExterna(p);
+        
+        if (consultId == null) {
+            log.error("❌ No se pudo registrar la consulta en la API externa");
+            // Continuar con el flujo pero notificar al equipo
+            sendText(p.getWhatsappId(),
+                "⚠️ *Advertencia técnica:* Hubo un problema al registrar tu consulta. " +
+                "No te preocupes, nuestro equipo ha sido notificado y procesará tu información manualmente.\n\n" +
+                "Puedes continuar con el pago. 💳"
             );
-
-            if (paymentUrl == null || paymentUrl.isBlank()) {
-                sendText(p.getWhatsappId(), "⚠️ Problema al generar el pago con Stripe. Intenta más tarde o escribe *HOLA*.");
-                p.setCurrentStep(OnboardingStep.WELCOME);
-                save(p);
-                return;
+        } else {
+            log.info("✅ Consulta registrada con ID: {}", consultId);
+            
+            // 2. Subir las fotos usando el consultaId
+            boolean fotosSubidas = subirFotosAApiExterna(consultId, p);
+            
+            if (!fotosSubidas) {
+                log.warn("⚠️ Las fotos no se pudieron subir a la API externa");
+                sendText(p.getWhatsappId(),
+                    "⚠️ *Nota:* Tus fotos se procesarán manualmente por nuestro equipo médico. " +
+                    "Esto no afecta tu consulta. 📸\n\n" +
+                    "Continuemos con el pago. 💳"
+                );
+            } else {
+                log.info("✅ Fotos subidas exitosamente a la API externa");
             }
-
-            p.setPaymentUrl(paymentUrl);
-            save(p);
-            log.info("Nueva URL de pago generada y guardada para {}: {}", p.getWhatsappId(), paymentUrl);
         }
+        
+        log.info("🔗 Integración con API externa completada");
+        // ========== FIN INTEGRACIÓN ==========
 
-        p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
-        save(p);
+        // Usar el consultId real si existe, o el whatsappId como fallback
+        String paymentReferenceId = (consultId != null && !consultId.isBlank()) 
+            ? consultId 
+            : p.getWhatsappId();
 
-        // Mensaje con botón grande
-        whatsAppClient.sendCtaUrlButton(
-                p.getWhatsappId(),
-                "💳 Pago con tarjeta (Stripe)\n\n" +
-                        "Costo: $999 MXN\n" +
-                        "Seguro y rápido\n\n" +
-                        "Da clic para pagar:",
-                "Pagar con Tarjeta 💳",
-                paymentUrl
-        );
-
-        sendText(p.getWhatsappId(),
-                "Cuando completes el pago, escribe *PAGADO* para confirmar.\n\n" +
-                        "¡Gracias por confiar en Elara! 💙");
-    }
-
-    private void goToPaymentMercadoPago(Patient p) {
-        p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
-        save(p);
-
-        String paymentUrl = mercadoPagoService.crearPaymentLink(
-                "ID-CONSULTA-UNICO", //TODO: AQUI VA EL ID DE CONSULTA UNICO
+        String paymentUrl = stripeService.crearPaymentLink(
+                paymentReferenceId,
                 p.getWhatsappId(),
                 p.getEmail()
         );
@@ -1112,18 +982,17 @@ public class OnboardingService {
                 "¡Todo listo! 🎉\n\n" +
                         "Solo falta realizar el pago de tu consulta dermatológica.\n\n" +
                         "💳 Costo: $999 MXN (impuestos incluidos)\n" +
-                        "🔒 Pago 100% seguro procesado por MercadoPago\n\n" +
+                        "🔒 Pago 100% seguro procesado por Stripe\n\n" +
                         "Da clic en el botón para pagar:",
                 "Pagar $999 💳",
                 paymentUrl
         );
 
-        // Mensaje adicional
+        // Mensaje adicional (opcional) para reforzar
         sendText(p.getWhatsappId(),
                 "Tan pronto completes el pago, recibirás automáticamente un mensaje de confirmación y el acceso a tu panel de paciente.\n\n" +
                         "¡Gracias por confiar en Elara! 💙");
     }
-
 
     private void handlePayment(Patient p, String text) {
         if (!text.equalsIgnoreCase("PAGADO")) {
@@ -1408,53 +1277,6 @@ public class OnboardingService {
         );
     }
 
-    private void askWithListSection(
-            Patient p,
-            OnboardingStep nextStep,
-            String bodyText,
-            String sectionTitle,
-            String buttonText,
-            List<String> options,
-            String contextKey
-    ) {
-        p.setCurrentStep(nextStep);
-        p.setLastListContext(contextKey);
-        save(p);
-
-        List<Map<String, String>> rows = new ArrayList<>();
-        for (int i = 0; i < options.size(); i++) {
-            Map<String, String> row = new HashMap<>();
-            row.put("id", contextKey + "_" + (i + 1));
-            row.put("title", options.get(i));
-            row.put("description", "");
-            rows.add(row);
-        }
-
-        for (String opt : options) {
-            if (opt.length() > 24) {
-                log.error("OPCIÓN DEMASIADO LARGA: {}", opt);
-                sendText(p.getWhatsappId(), "Error temporal. Escribe *HOLA*");
-                return;
-            }
-        }
-
-        Map<String, Object> section = new HashMap<>();
-        section.put("title", sectionTitle);
-        section.put("rows", rows);
-
-        List<Map<String, Object>> sections = new ArrayList<>();
-        sections.add(section);
-
-        // ← LLAMADA AL MÉTODO CON NOMBRE NUEVO
-        whatsAppClient.sendListMessageWithSections(
-                p.getWhatsappId(),
-                "Método de pago",
-                bodyText,
-                buttonText,
-                sections
-        );
-    }
-
     // ==== NUEVO: devuelve las opciones según el contexto ====
     private List<String> getOptionsForContext(String context) {
         return switch (context) {
@@ -1473,9 +1295,6 @@ public class OnboardingService {
             case "gravedad_acne" -> M_12_OPTIONS;
             case "gravedad_manchas" -> M_37_OPTIONS;
             case "gravedad_rosacea" -> M_40_OPTIONS;
-
-            // ← NUEVO CASE PARA MÉTODO DE PAGO
-            case "metodo_pago" -> M_METODO_PAGO_OPTIONS;
 
             default -> {
                 log.warn("Contexto de lista desconocido: {}", context);
@@ -1553,5 +1372,239 @@ public class OnboardingService {
         );
 
         log.info("Mensaje de pago exitoso enviado a {}", whatsappId);
+    }
+
+    // ====================== INTEGRACIÓN CON API EXTERNA DE ELARA ======================
+
+    /**
+     * Registra la consulta completa en la API externa
+     * Debe llamarse DESPUÉS de recopilar toda la información y las fotos
+     * 
+     * @param patient Paciente con toda la información recopilada
+     * @return consultaId generado por la API, o null si falló
+     */
+    private String registrarConsultaEnApiExterna(Patient patient) {
+        try {
+            log.info("📤 Registrando consulta en API externa para: {}", patient.getWhatsappId());
+            
+            // Formatear fecha de nacimiento al formato esperado: DD-MM-YYYY
+            String fechaNacFormateada = null;
+            if (patient.getFechaNacimiento() != null) {
+                fechaNacFormateada = String.format("%02d-%02d-%04d",
+                        patient.getFechaNacimiento().getDayOfMonth(),
+                        patient.getFechaNacimiento().getMonthValue(),
+                        patient.getFechaNacimiento().getYear());
+            }
+            
+            // Determinar el tipo de consulta
+            Integer tipoConsulta = 1; // Por defecto "para mí"
+            if (Boolean.TRUE.equals(patient.getConsultaParaOtraPersona())) {
+                tipoConsulta = 2; // "para otra persona"
+            }
+            // TODO: Agregar lógica para menor de edad (3) si aplica
+            
+            // Construir el request con todos los datos
+            com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.RegisterConsultRequest request = 
+                com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.RegisterConsultRequest.builder()
+                    // Identificación
+                    .whatsappId(patient.getWhatsappId())
+                    .consultaId(patient.getConsultaId()) // null si es nuevo, o el ID si es actualización
+                    .padecimiento(patient.getPadecimiento())
+                    .email(patient.getEmail())
+                    .consulta(tipoConsulta)
+                    
+                    // Datos personales
+                    .nombreCompleto(patient.getNombreCompleto())
+                    .genero(patient.getGenero())
+                    .fechaNacimiento(fechaNacFormateada)
+                    .pesoKg(patient.getPesoKg())
+                    .alturaM(patient.getAlturaM())
+                    .fuma(patient.getFuma())
+                    
+                    // Historial médico
+                    .desdeCuando(patient.getDesdeCuando())
+                    .tratamientoAnterior(patient.getTratamientoAnterior())
+                    .tratamientosUsados(patient.getTratamientosUsados())
+                    .alergias(patient.getAlergias())
+                    .alergiasDetalles(patient.getAlergiasDetalles())
+                    .medicamentos(patient.getMedicamentos())
+                    .medicamentosDetalles(patient.getMedicamentosDetalles())
+                    .enfermedades(patient.getEnfermedades())
+                    .enfermedadesDetalles(patient.getEnfermedadesDetalles())
+                    .notadermatologo(patient.getNotasAdicionales())
+                    
+                    // Campos condicionales según padecimiento
+                    .areaCaida(patient.getAreaCaida())
+                    .antecedentesFamiliares(patient.getAntecedentesFamiliares())
+                    .gravedadAcne(patient.getGravedadAcne())
+                    .gravedadManchas(patient.getGravedadManchas())
+                    .gravedadRosacea(patient.getGravedadRosacea())
+                    .mejoraPrincipal(patient.getMejoraPrincipal())
+                    .tipoPiel(patient.getTipoPiel())
+                    .sensibilidadPiel(patient.getSensibilidadPiel())
+                    .exposicionSol(patient.getExposicionSol())
+                    .usaProtector(patient.getUsaProtector())
+                    .statusEmbarazo(patient.getStatusEmbarazo())
+                    
+                    // Fotos (URLs locales por ahora, luego se suben a la API)
+                    .photoUrls(patient.getPhotoUrls())
+                    
+                    // Notas adicionales
+                    .notasAdicionales(patient.getNotasAdicionales())
+                    
+                    // Aceptaciones (siempre true porque ya aceptó en el bot)
+                    .aceptaTerminos(true)
+                    .aceptaAvisoPrivacidad(true)
+                    .aceptaConsentimiento(true)
+                    
+                    // Pago (aún no procesado)
+                    .pagoProcesado(false)
+                    .pagoId(null)
+                    
+                    // Metadata
+                    .canalOrigen("WHATSAPP")
+                    .createdAt(LocalDateTime.now())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
+            
+            // Llamar al Feign Client
+            com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.response.RegisterConsultResponse response = 
+                elaraPatientClient.registerConsult(request);
+            
+            // Verificar respuesta
+            if (response != null && response.getCode() == 200 && response.getConsultaId() != null) {
+                log.info("✅ Consulta registrada exitosamente. ID: {}", response.getConsultaId());
+                
+                // Guardar el consultaId en el paciente local
+                patient.setConsultaId(response.getConsultaId());
+                save(patient);
+                
+                return response.getConsultaId();
+            } else {
+                log.error("❌ Error al registrar consulta: {}", response != null ? response.getMensaje() : "Respuesta null");
+                return null;
+            }
+            
+        } catch (Exception e) {
+            log.error("❌ Excepción al registrar consulta en API externa", e);
+            return null;
+        }
+    }
+
+    /**
+     * Sube las fotos a la API externa usando el consultaId
+     * 
+     * @param consultId ID de consulta obtenido del registro
+     * @param patient Paciente con las URLs de las fotos
+     * @return true si se subieron exitosamente, false si falló
+     */
+    private boolean subirFotosAApiExterna(String consultId, Patient patient) {
+        if (consultId == null || consultId.isBlank()) {
+            log.error("❌ No se puede subir fotos sin consultId");
+            return false;
+        }
+        
+        if (patient.getPhotoUrls() == null || patient.getPhotoUrls().isEmpty()) {
+            log.warn("⚠️ No hay fotos para subir");
+            return true; // No es error, simplemente no hay fotos
+        }
+        
+        try {
+            log.info("📤 Subiendo {} fotos a la API externa para consulta: {}", 
+                    patient.getPhotoUrls().size(), consultId);
+            
+            // Convertir las URLs de WhatsApp a Base64
+            List<com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.UploadPhotosRequest.PhotoData> photos = 
+                new ArrayList<>();
+            
+            int photoNumber = 1;
+            for (String photoUrl : patient.getPhotoUrls()) {
+                try {
+                    log.debug("📸 Procesando foto {}/{}: {}", photoNumber, patient.getPhotoUrls().size(), photoUrl);
+                    
+                    // ✅ DESCARGA REAL de la foto desde WhatsApp
+                    String base64Data = whatsAppClient.descargarFotoComoBase64(photoUrl);
+                    
+                    if (base64Data == null || base64Data.isBlank()) {
+                        log.error("❌ No se pudo descargar la foto {} desde WhatsApp", photoNumber);
+                        // Continuar con las demás fotos en lugar de fallar todo
+                        photoNumber++;
+                        continue;
+                    }
+                    
+                    // Determinar el tipo de contenido basándose en la foto
+                    String contentType = "image/jpeg"; // Por defecto JPG
+                    String extension = ".jpg";
+                    
+                    // Detectar tipo de imagen por los primeros bytes del Base64
+                    if (base64Data.startsWith("/9j/")) {
+                        contentType = "image/jpeg";
+                        extension = ".jpg";
+                    } else if (base64Data.startsWith("iVBORw")) {
+                        contentType = "image/png";
+                        extension = ".png";
+                    }
+                    
+                    // Crear el objeto PhotoData con la foto REAL
+                    photos.add(com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.UploadPhotosRequest.PhotoData.builder()
+                            .filename("lesion_" + photoNumber + extension)
+                            .contentType(contentType)
+                            .data(base64Data)
+                            .build());
+                    
+                    log.info("✅ Foto {} descargada y convertida a Base64: {} caracteres", 
+                            photoNumber, base64Data.length());
+                    
+                    photoNumber++;
+                    
+                } catch (Exception e) {
+                    log.error("❌ Excepción al procesar foto {}: {}", photoNumber, photoUrl, e);
+                    photoNumber++;
+                    // Continuar con las demás fotos
+                }
+            }
+            
+            if (photos.isEmpty()) {
+                log.error("❌ No se pudo procesar ninguna foto exitosamente");
+                return false;
+            }
+            
+            log.info("📦 Total de fotos preparadas para subir: {}/{}", 
+                    photos.size(), patient.getPhotoUrls().size());
+            
+            // Crear el request
+            com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.UploadPhotosRequest request = 
+                com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.UploadPhotosRequest.builder()
+                    .photos(photos)
+                    .build();
+            
+            // Llamar al Feign Client
+            com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.response.UploadPhotosResponse response = 
+                elaraPatientClient.uploadPhotos(consultId, request);
+            
+            // Verificar respuesta
+            if (response != null && response.getCode() == 200) {
+                log.info("✅ Fotos subidas exitosamente: {}/{}", 
+                        response.getTotalUploaded(), photos.size());
+                
+                if (response.getPhotoUrls() != null && !response.getPhotoUrls().isEmpty()) {
+                    log.info("📷 URLs de fotos en la API:");
+                    response.getPhotoUrls().forEach(url -> log.info("   - {}", url));
+                    
+                    // Opcional: Actualizar las URLs del paciente con las de la API
+                    // patient.setPhotoUrls(response.getPhotoUrls());
+                    // save(patient);
+                }
+                
+                return true;
+            } else {
+                log.error("❌ Error al subir fotos: {}", response != null ? response.getMensaje() : "Respuesta null");
+                return false;
+            }
+            
+        } catch (Exception e) {
+            log.error("❌ Excepción al subir fotos a API externa", e);
+            return false;
+        }
     }
 }

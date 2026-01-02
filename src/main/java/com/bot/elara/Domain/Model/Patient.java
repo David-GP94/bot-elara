@@ -86,6 +86,13 @@ public class Patient {
     private String paymentUrl;
     private String codigoDescuento;
 
+    // === INTEGRACIÓN CON API EXTERNA ===
+    private String consultaId; // ID de consulta desde la API externa
+    private String patientApiId; // ID del paciente en la API externa
+    private Boolean descuentoAplicado;
+    private java.math.BigDecimal montoDescuento;
+    private java.math.BigDecimal montoFinal;
+
     // === AUDITORÍA ===
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

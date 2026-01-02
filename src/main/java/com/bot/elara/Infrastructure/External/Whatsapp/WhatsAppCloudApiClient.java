@@ -8,9 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
+import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -403,6 +401,89 @@ public class WhatsAppCloudApiClient {
             log.error("Error enviando botón CTA URL a " + normalized, e);
             // Fallback: enviar como texto normal con la URL
             sendText(normalized, bodyText + "\n\nRealiza tu pago aquí:\n" + url);
+        }
+    }
+
+    // ==================== DESCARGA DE MEDIOS (FOTOS) ====================
+
+    /**
+     * Descarga el contenido binario de una foto desde WhatsApp
+     * 
+     * Las URLs de WhatsApp son temporales y expiran después de 24-48 horas.
+     * Este método descarga los bytes reales de la imagen para poder procesarlos
+     * (guardar en S3, convertir a Base64, enviar a APIs externas, etc.)
+     * 
+     * Flujo:
+     * 1. Usuario envía foto por WhatsApp
+     * 2. WhatsApp genera URL temporal: https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=...
+     * 3. Este método descarga los bytes usando el access token de WhatsApp
+     * 4. Los bytes se pueden convertir a Base64 para enviar por JSON
+     * 
+     * @param mediaUrl URL temporal de WhatsApp (de tipo lookaside.fbsbx.com)
+     * @return bytes de la imagen (JPG, PNG, etc.) o null si falla
+     */
+    public byte[] descargarFoto(String mediaUrl) {
+        if (mediaUrl == null || mediaUrl.isBlank()) {
+            log.error("❌ URL de foto es null o vacía");
+            return null;
+        }
+
+        try {
+            log.debug("📥 Descargando foto de WhatsApp: {}", mediaUrl);
+
+            // Crear headers con el Bearer token de WhatsApp
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBearerAuth(config.getAccessToken());
+            headers.setAccept(List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.IMAGE_JPEG, MediaType.IMAGE_PNG));
+
+            HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+            // Descargar los bytes de la imagen
+            ResponseEntity<byte[]> response = restTemplate.exchange(
+                    mediaUrl,
+                    HttpMethod.GET,
+                    requestEntity,
+                    byte[].class
+            );
+
+            if (response.getStatusCode() == HttpStatus.OK && response.getBody() != null) {
+                byte[] photoBytes = response.getBody();
+                log.info("✅ Foto descargada exitosamente: {} bytes", photoBytes.length);
+                return photoBytes;
+            } else {
+                log.error("❌ Respuesta inválida al descargar foto. Status: {}", response.getStatusCode());
+                return null;
+            }
+
+        } catch (Exception e) {
+            log.error("❌ Excepción al descargar foto de WhatsApp: {}", mediaUrl, e);
+            return null;
+        }
+    }
+
+    /**
+     * Descarga una foto y la convierte directamente a Base64
+     * 
+     * Útil para enviar fotos a APIs que esperan JSON con imágenes en Base64
+     * 
+     * @param mediaUrl URL temporal de WhatsApp
+     * @return String Base64 de la imagen, o null si falla
+     */
+    public String descargarFotoComoBase64(String mediaUrl) {
+        byte[] photoBytes = descargarFoto(mediaUrl);
+        
+        if (photoBytes == null || photoBytes.length == 0) {
+            log.error("❌ No se pudo descargar la foto para convertir a Base64");
+            return null;
+        }
+
+        try {
+            String base64 = java.util.Base64.getEncoder().encodeToString(photoBytes);
+            log.debug("✅ Foto convertida a Base64: {} caracteres", base64.length());
+            return base64;
+        } catch (Exception e) {
+            log.error("❌ Error al convertir foto a Base64", e);
+            return null;
         }
     }
 

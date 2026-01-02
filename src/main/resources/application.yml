@@ -32,6 +32,8 @@ logging:
     com.bot.elara: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql: TRACE
+    # Logs de Feign para ver las peticiones HTTP
+    com.bot.elara.Infrastructure.External.Clients.ElaraApi: DEBUG
 
 # ===========================================================================
 # CONFIGURACIÓN COMÚN
@@ -56,6 +58,36 @@ mercadopago:
 
 app:
   base-url: http://localhost:8080  # Default local, se sobrescribe en perfiles
+
+# ===========================================================================
+# CONFIGURACIÓN DE API EXTERNA ELARA
+# ===========================================================================
+elara:
+  api:
+    base-url: ${ELARA_API_URL:http://v2lara.com}
+    timeout: 30000
+    auth:
+      # Credenciales del SISTEMA para obtener token de acceso
+      # Este no es un usuario del bot, es para autenticar las peticiones de la app
+      email: ${ELARA_SYSTEM_EMAIL:sistema@elara.com}
+      password: ${ELARA_SYSTEM_PASSWORD:password_del_sistema}
+
+# ===========================================================================
+# CONFIGURACIÓN DE FEIGN
+# ===========================================================================
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 30000
+        readTimeout: 30000
+        loggerLevel: full
+  compression:
+    request:
+      enabled: true
+    response:
+      enabled: true
+
 ---
 # PERFIL: SANDBOX (Pruebas locales)
 spring:
