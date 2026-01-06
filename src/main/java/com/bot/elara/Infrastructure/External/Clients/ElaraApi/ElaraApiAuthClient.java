@@ -12,8 +12,8 @@ import org.springframework.web.bind.annotation.RequestBody;
  * Feign Client para autenticación con la API externa de Elara
  * 
  * Endpoints:
- * - POST /api/auth/login - Autenticación con email y password
- * - POST /api/auth/refresh - Renovación de token con refresh token
+ * - POST /api/auth/login/ - Autenticación con email y password
+ * - POST /api/auth/refresh/ - Renovación de token con refresh token
  */
 @FeignClient(
         name = "elara-auth-client",
@@ -22,7 +22,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 public interface ElaraApiAuthClient {
 
     /**
-     * POST /api/auth/login
+     * POST /api/auth/login/
      * 
      * Request JSON:
      * {
@@ -36,11 +36,11 @@ public interface ElaraApiAuthClient {
      *   "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
      * }
      */
-    @PostMapping("/api/auth/login")
+    @PostMapping("/api/auth/login/")
     LoginResponse login(@RequestBody LoginRequest request);
 
     /**
-     * POST /api/auth/refresh
+     * POST /api/auth/refresh/
      * 
      * Request JSON:
      * {
@@ -53,6 +53,6 @@ public interface ElaraApiAuthClient {
      *   "refresh": "nuevo_token_refresh..."
      * }
      */
-    @PostMapping("/api/auth/refresh")
+    @PostMapping("/api/auth/refresh/")
     RefreshTokenResponse refreshToken(@RequestBody RefreshTokenRequest request);
 }

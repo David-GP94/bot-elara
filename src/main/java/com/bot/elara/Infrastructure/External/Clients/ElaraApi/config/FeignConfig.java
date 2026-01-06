@@ -3,6 +3,7 @@ package com.bot.elara.Infrastructure.External.Clients.ElaraApi.config;
 import feign.Logger;
 import feign.RequestInterceptor;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -11,6 +12,7 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 @RequiredArgsConstructor
+@Slf4j
 public class FeignConfig {
 
     private final FeignAuthInterceptor authInterceptor;
@@ -21,7 +23,16 @@ public class FeignConfig {
      */
     @Bean
     Logger.Level feignLoggerLevel() {
+        log.info("🔧 Configurando Feign Logger en modo FULL");
         return Logger.Level.FULL;
+    }
+
+    /**
+     * Logger personalizado para Feign que muestra requests/responses formateados
+     */
+    @Bean
+    public Logger feignLogger() {
+        return new feign.slf4j.Slf4jLogger();
     }
 
     /**

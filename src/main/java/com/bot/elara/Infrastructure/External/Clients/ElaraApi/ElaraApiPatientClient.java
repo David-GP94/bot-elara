@@ -32,7 +32,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 public interface ElaraApiPatientClient {
 
     /**
-     * POST /api/patient/verify
+     * POST /api/patient/verify/
      * 
      * Verifica si un paciente existe en el sistema basándose en su WhatsApp ID y email
      * 
@@ -63,7 +63,7 @@ public interface ElaraApiPatientClient {
      * @param request Datos del paciente a verificar (whatsappId y email)
      * @return Información de verificación del paciente
      */
-    @PostMapping("/api/patient/verify")
+    @PostMapping("/api/patient/verify/")
     VerifyPatientResponse verifyPatient(@RequestBody VerifyPatientRequest request);
 
     /**
@@ -139,14 +139,14 @@ public interface ElaraApiPatientClient {
      * @param request Datos completos de la consulta del paciente
      * @return Respuesta con el consultaId generado o actualizado
      */
-    @PostMapping("/api/consult/registry")
+    @PostMapping("/api/consult/registry/")
     RegisterConsultResponse registerConsult(@RequestBody RegisterConsultRequest request);
 
     /**
-     * POST /api/consult/{consult_id}/photos
+     * POST /api/consult/{consult_id}/photos/
      * 
      * Sube una o más fotos para una consulta específica usando el consultId
-     * generado previamente en /api/consult/registry
+     * generado previamente en /api/consult/registry/
      * 
      * Las fotos se envían en formato Base64 dentro del JSON
      * 
@@ -182,11 +182,11 @@ public interface ElaraApiPatientClient {
      *   "totalUploaded": 2
      * }
      * 
-     * @param consultId ID de la consulta (obtenido de /api/consult/registry)
+     * @param consultId ID de la consulta (obtenido de /api/consult/registry/)
      * @param request Objeto con el array de fotos en Base64
      * @return Respuesta con las URLs de las fotos subidas
      */
-    @PostMapping("/api/consult/{consult_id}/photos")
+    @PostMapping("/api/consult/{consult_id}/photos/")
     UploadPhotosResponse uploadPhotos(
             @PathVariable("consult_id") String consultId,
             @RequestBody UploadPhotosRequest request

@@ -40,8 +40,8 @@ public class ElaraApiAuthService {
     private String currentRefreshToken;
     private Instant tokenExpiration;
     
-    // Tiempo de expiración del token en segundos (por defecto 1 hora)
-    private static final long DEFAULT_TOKEN_EXPIRATION = 3600L;
+    // Tiempo de expiración del token en segundos (5 minutos según la API)
+    private static final long DEFAULT_TOKEN_EXPIRATION = 300L;
 
     /**
      * Se ejecuta automáticamente al iniciar la aplicación
@@ -49,17 +49,14 @@ public class ElaraApiAuthService {
      */
     @PostConstruct
     public void init() {
-        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         log.info("🔐 Inicializando autenticación con API Elara");
-        log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        
         if (systemEmail == null || systemEmail.isBlank()) {
-            log.error("❌ No se configuró elara.api.auth.email en application.yml");
+            log.error("No se configuró elara.api.auth.email en application.yml");
             return;
         }
 
         if (systemPassword == null || systemPassword.isBlank()) {
-            log.error("❌ No se configuró elara.api.auth.password en application.yml");
+            log.error("No se configuró elara.api.auth.password en application.yml");
             return;
         }
 
@@ -68,10 +65,8 @@ public class ElaraApiAuthService {
         
         if (response != null) {
             log.info("✅ Autenticación exitosa al iniciar la aplicación");
-            log.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         } else {
             log.error("❌ No se pudo autenticar con la API al iniciar");
-            log.error("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         }
     }
 
@@ -80,14 +75,12 @@ public class ElaraApiAuthService {
      */
     private LoginResponse login(String email, String password) {
         try {
-            log.info("🔐 Realizando login del sistema...");
-            
             LoginRequest request = LoginRequest.builder()
                     .email(email)
                     .password(password)
                     .build();
 
-            // Feign hace: POST http://v2lara.com/api/auth/login
+            // Feign hace: POST http://v2lara.com/api/auth/login/
             LoginResponse response = authClient.login(request);
 
             if (response != null && response.getAccess() != null) {
@@ -95,20 +88,17 @@ public class ElaraApiAuthService {
                 this.currentAccessToken = response.getAccess();
                 this.currentRefreshToken = response.getRefresh();
                 
-                // Calcular expiración (restar 5 minutos de margen)
-                this.tokenExpiration = Instant.now().plusSeconds(DEFAULT_TOKEN_EXPIRATION - 300);
-
+                // Calcular expiración (token dura 5 min, restar 1 min de margen)
+                this.tokenExpiration = Instant.now().plusSeconds(DEFAULT_TOKEN_EXPIRATION - 60);
                 log.info("✅ Token de acceso obtenido");
-                log.debug("Access token preview: {}...", response.getAccess().substring(0, Math.min(30, response.getAccess().length())));
-                
                 return response;
             }
 
-            log.error("❌ Login falló - respuesta vacía o sin tokens");
+            log.error("Login falló - respuesta vacía o sin tokens");
             return null;
 
         } catch (Exception e) {
-            log.error("❌ Error en login del sistema", e);
+            log.error("Error en login del sistema", e);
             return null;
         }
     }
@@ -119,21 +109,17 @@ public class ElaraApiAuthService {
     private RefreshTokenResponse refreshToken() {
         try {
             if (currentRefreshToken == null || currentRefreshToken.isBlank()) {
-                log.warn("⚠️ No hay refresh token disponible, reintentando login...");
                 LoginResponse loginResponse = login(systemEmail, systemPassword);
                 return loginResponse != null ? RefreshTokenResponse.builder()
                         .access(loginResponse.getAccess())
                         .refresh(loginResponse.getRefresh())
                         .build() : null;
             }
-
-            log.info("🔄 Refrescando token de acceso...");
-
             RefreshTokenRequest request = RefreshTokenRequest.builder()
                     .refresh(currentRefreshToken)
                     .build();
 
-            // Feign hace: POST http://v2lara.com/api/auth/refresh
+            // Feign hace: POST http://v2lara.com/api/auth/refresh/
             RefreshTokenResponse response = authClient.refreshToken(request);
 
             if (response != null && response.getAccess() != null) {
@@ -141,18 +127,18 @@ public class ElaraApiAuthService {
                 this.currentAccessToken = response.getAccess();
                 this.currentRefreshToken = response.getRefresh();
                 
-                // Renovar expiración
-                this.tokenExpiration = Instant.now().plusSeconds(DEFAULT_TOKEN_EXPIRATION - 300);
+                // Renovar expiración (5 min - 1 min margen)
+                this.tokenExpiration = Instant.now().plusSeconds(DEFAULT_TOKEN_EXPIRATION - 60);
 
                 log.info("✅ Token refrescado exitosamente");
                 return response;
             }
 
-            log.error("❌ Refresh token falló");
+            log.error("Refresh token falló");
             return null;
 
         } catch (Exception e) {
-            log.error("❌ Error refrescando token", e);
+            log.error("Error refrescando token", e);
             return null;
         }
     }
@@ -169,7 +155,7 @@ public class ElaraApiAuthService {
     public String getValidToken() {
         // Si no hay token, intentar hacer login
         if (currentAccessToken == null) {
-            log.warn("⚠️ No hay token de acceso. Intentando login...");
+            log.warn("No hay token de acceso. Intentando login...");
             LoginResponse response = login(systemEmail, systemPassword);
             return response != null ? response.getAccess() : null;
         }
@@ -181,7 +167,7 @@ public class ElaraApiAuthService {
             RefreshTokenResponse response = refreshToken();
             
             if (response == null) {
-                log.error("❌ No se pudo refrescar el token. Reintentando login...");
+                log.error("No se pudo refrescar el token. Reintentando login...");
                 LoginResponse loginResponse = login(systemEmail, systemPassword);
                 return loginResponse != null ? loginResponse.getAccess() : null;
             }

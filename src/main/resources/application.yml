@@ -4,6 +4,11 @@ server:
 spring:
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:sandbox}
+  
+  # Deshabilitar verificador de compatibilidad Spring Cloud/Boot
+  cloud:
+    compatibility-verifier:
+      enabled: false
 
   datasource:
     url: jdbc:h2:file:./data/derma_onboarding;DB_CLOSE_DELAY=-1;DATABASE_TO_UPPER=false;CASE_INSENSITIVE_IDENTIFIERS=true;MODE=MariaDB
@@ -32,8 +37,18 @@ logging:
     com.bot.elara: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql: TRACE
-    # Logs de Feign para ver las peticiones HTTP
-    com.bot.elara.Infrastructure.External.Clients.ElaraApi: DEBUG
+    # ✅ Logs de Feign para ver TODAS las peticiones HTTP con headers y body
+    com.bot.elara.Infrastructure.External.Clients.ElaraApi.ElaraApiAuthClient: DEBUG
+    com.bot.elara.Infrastructure.External.Clients.ElaraApi.ElaraApiPatientClient: DEBUG
+    # Logger de Feign interno
+    feign: DEBUG
+    feign.Logger: DEBUG
+  # 📁 GUARDAR LOGS EN ARCHIVO
+  file:
+    name: logs/elara-bot.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss} %highlight(%-5level) %magenta([%thread]) %cyan(%logger{36}) - %msg%n"
 
 # ===========================================================================
 # CONFIGURACIÓN COMÚN
@@ -53,7 +68,7 @@ mercadopago:
     key:  ${MERCADOPAGO_PUBLIC_KEY:TEST-2ccea0bc-ed01-433e-af2e-c85c40353fc0}
   notification:
     url: ${MERCADOPAGO_WEBHOOK_URL:https://su-subfalcial-eulalia.ngrok-free.dev}
-  price-amount: 99900
+  price-amount: 36000  # $360 MXN para pruebas
   currency: MXN
 
 app:
@@ -64,7 +79,7 @@ app:
 # ===========================================================================
 elara:
   api:
-    base-url: ${ELARA_API_URL:http://v2lara.com}
+    base-url: ${ELARA_API_URL:https://www.sv-lara.com}
     timeout: 30000
     auth:
       # Credenciales del SISTEMA para obtener token de acceso

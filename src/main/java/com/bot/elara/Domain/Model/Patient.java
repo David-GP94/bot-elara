@@ -35,6 +35,9 @@ public class Patient {
     private Double pesoKg;
     private Double alturaM;
     private Boolean fuma;
+    
+    // === ACEPTACIONES ===
+    private Boolean aceptaTerminosYPrivacidad; // true si aceptó términos en el paso START
 
     private String desdeCuando; // Hace días, semanas, meses, años
 

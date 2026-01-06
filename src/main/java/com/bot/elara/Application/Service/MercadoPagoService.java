@@ -71,6 +71,12 @@ public class MercadoPagoService {
      * Crea un link de pago en MercadoPago usando Checkout Pro
      */
     public String crearPaymentLink(String consultaId, String whatsappId, String email) {
+        log.info("🛍️ INICIANDO creación de link MercadoPago");
+        log.info("   consultaId: {}", consultaId);
+        log.info("   whatsappId: {}", whatsappId);
+        log.info("   email: {}", email);
+        log.info("   accessToken presente: {}", accessToken != null && !accessToken.isBlank());
+        
         // Validaciones
         if (consultaId == null || consultaId.isBlank()) {
             log.error("❌ consultaId no puede estar vacío");
@@ -81,8 +87,14 @@ public class MercadoPagoService {
             log.error("❌ whatsappId no puede estar vacío");
             return null;
         }
+        
+        if (accessToken == null || accessToken.isBlank()) {
+            log.error("❌ ACCESS TOKEN DE MERCADOPAGO NO CONFIGURADO");
+            log.error("   Verifica que mercadopago.access.token esté en application.yml o .env");
+            return null;
+        }
 
-        if (email == null || ! email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$")) {
+        if (email == null || !email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$")) {
             log.warn("⚠️ Email inválido: {}, usando default", email);
             email = "noreply@elara.com";
         }
@@ -107,21 +119,24 @@ public class MercadoPagoService {
             items.add(item);
             preference.setItems(items);
 
-            // Datos del comprador
-            PreferenceRequest. Payer payer = new PreferenceRequest.Payer(
+            // Datos del comprador (opcional, permite guest checkout)
+            PreferenceRequest.Payer payer = new PreferenceRequest.Payer(
                     email,
                     whatsappId
             );
             preference.setPayer(payer);
 
-            // URLs de retorno
+            // URLs de retorno - DEBEN estar configuradas cuando usas auto_return
             PreferenceRequest.BackUrls backUrls = new PreferenceRequest.BackUrls(
-                    baseUrl + "/pago-exito-whatsapp",
-                    baseUrl + "/pago-cancelado-whatsapp",
-                    baseUrl + "/pago-pendiente-whatsapp"
+                    baseUrl + "/pago-exito-whatsapp",  // success
+                    baseUrl + "/pago-cancelado-whatsapp",  // failure
+                    baseUrl + "/pago-pendiente-whatsapp"  // pending
             );
             preference.setBackUrls(backUrls);
-            preference.setAutoReturn("approved");
+            
+            // Auto return - Comentado porque requiere HTTPS y URLs públicas válidas
+            // Para desarrollo/test es mejor omitirlo
+            // preference.setAutoReturn("approved");
 
             // Webhook
             preference.setNotificationUrl(notificationUrl);
@@ -207,20 +222,24 @@ public class MercadoPagoService {
         } catch (HttpClientErrorException e) {
             log.error("❌ Error del cliente (4xx) para {}: {} - {}",
                     whatsappId, e.getStatusCode(), e.getResponseBodyAsString());
+            log.error("   Headers enviados: Authorization=Bearer {}...", 
+                accessToken != null ? accessToken.substring(0, Math.min(20, accessToken.length())) : "null");
             return null;
 
         } catch (HttpServerErrorException e) {
-            log.error("❌ Error del servidor MercadoPago (5xx) para {}: {}",
-                    whatsappId, e.getStatusCode());
+            log.error("❌ Error del servidor MercadoPago (5xx) para {}: {} - {}",
+                    whatsappId, e.getStatusCode(), e.getResponseBodyAsString());
             return null;
 
         } catch (ResourceAccessException e) {
             log.error("❌ Error de conexión con MercadoPago para {}: {}",
                     whatsappId, e.getMessage());
             return null;
-
+        
         } catch (Exception e) {
-            log.error("❌ Error inesperado creando preferencia para {}", whatsappId, e);
+            log.error("❌ Error inesperado al crear payment link de MercadoPago", e);
+            log.error("   Clase: {}", e.getClass().getName());
+            log.error("   Mensaje: {}", e.getMessage());
             return null;
         }
     }

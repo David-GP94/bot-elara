@@ -151,6 +151,9 @@ public class OnboardingService {
             case ASK_TERMINOS -> handleTerminos(patient, text);
             case ASK_AVISO_PRIVACIDAD -> handleAvisoPrivacidad(patient, text);
             case ASK_CONSENTIMIENTO -> handleConsentimiento(patient, text);
+            case ASK_METODO_PAGO -> handleMetodoPago(patient, text);
+            case ASK_CODIGO_DESCUENTO -> handleCodigoDescuento(patient, text);
+            case ASK_INGRESAR_CODIGO -> handleIngresarCodigo(patient, text);
             case PROCESS_PAYMENT -> handlePayment(patient, text);
             case COMPLETED ->
                     sendText(from, "¡Tu consulta ya está completada! Tu dermatóloga la revisará pronto. Te avisaremos cuando esté lista.");
@@ -220,6 +223,9 @@ public class OnboardingService {
             case ASK_FOTOS -> askWithButtons(p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
             case ASK_EXCESO_FOTOS -> askWithButtons(p, OnboardingStep.ASK_EXCESO_FOTOS, M_EXCESO_FOTOS, M_EXCESO_FOTOS_OPTIONS);
             case ASK_MAS_FOTOS -> sendText(from, M_21);
+            case ASK_METODO_PAGO -> askWithButtons(p, OnboardingStep.ASK_METODO_PAGO, M_METODO_PAGO, M_METODO_PAGO_OPTIONS);
+            case ASK_CODIGO_DESCUENTO -> askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
+            case ASK_INGRESAR_CODIGO -> askWithText(p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
             case PROCESS_PAYMENT -> sendText(from, "Por favor realiza el pago y escribe *PAGADO* cuando termines.");
             default -> sendText(from, "Continuemos donde te quedaste. ¿En qué puedo ayudarte?");
         }
@@ -364,6 +370,9 @@ public class OnboardingService {
             askWithButtons(p, OnboardingStep.START, M_ACCEPT_TERMINOS, M_TERMINOS_OPTIONS);
             return;
         }
+        // Usuario aceptó términos y condiciones
+        p.setAceptaTerminosYPrivacidad(true);
+        save(p);
         askWithList(p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
     }
 
@@ -425,6 +434,12 @@ public class OnboardingService {
             askWithText(p, OnboardingStep.ASK_EMAIL, M_2);
             return;
         }
+        
+        // ========== VERIFICAR PACIENTE EN API EXTERNA ==========
+        log.info("📧 Email confirmado. Verificando paciente en API externa...");
+        verificarPacienteEnApiExterna(p);
+        // ========== FIN VERIFICACIÓN ==========
+        
         askWithButtons(p, OnboardingStep.ASK_MAYORIA_EDAD, M_4, M_4_OPTIONS);
     }
 
@@ -857,11 +872,16 @@ public class OnboardingService {
             askWithText(p, OnboardingStep.ASK_NOTAS_ADICIONALES_DETALLES, M_44);
             return;
         }
+        // Toda la información recopilada, registrar en API externa ANTES de pedir fotos
+        registrarConsultaEnApiExterna(p);
         askWithButtons(p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
     }
 
     private void handleNotasAdicionalesDetalles(Patient p, String text) {
         p.setNotasAdicionales(text.trim());
+        save(p);
+        // Toda la información recopilada, registrar en API externa ANTES de pedir fotos
+        registrarConsultaEnApiExterna(p);
         askWithButtons(p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
     }
 
@@ -920,28 +940,97 @@ public class OnboardingService {
 
 
     private void goToPayment(Patient p) {
+        // En lugar de ir directo a pago, preguntar método de pago
+        askWithButtons(p, OnboardingStep.ASK_METODO_PAGO, M_METODO_PAGO, M_METODO_PAGO_OPTIONS);
+    }
+
+    /**
+     * Handler para cuando el usuario selecciona el método de pago (Stripe o MercadoPago)
+     */
+    private void handleMetodoPago(Patient p, String text) {
+        String selected = getSelectedOption(text, M_METODO_PAGO_OPTIONS);
+        
+        if (selected == null) {
+            sendText(p.getWhatsappId(), "❌ Por favor selecciona una opción válida usando los botones.");
+            askWithButtons(p, OnboardingStep.ASK_METODO_PAGO, M_METODO_PAGO, M_METODO_PAGO_OPTIONS);
+            return;
+        }
+        
+        // Guardar la selección (0 = Stripe, 1 = MercadoPago)
+        if (selected.contains("Stripe")) {
+            p.setMetodoPagoElegido(0);
+            log.info("💳 Usuario {} seleccionó Stripe", p.getWhatsappId());
+        } else if (selected.contains("Mercado Pago")) {
+            p.setMetodoPagoElegido(1);
+            log.info("🛍️ Usuario {} seleccionó MercadoPago", p.getWhatsappId());
+        }
+        
+        save(p);
+        
+        // Preguntar si tiene código de descuento
+        askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
+    }
+
+    /**
+     * Handler para cuando preguntamos si tiene código de descuento
+     */
+    private void handleCodigoDescuento(Patient p, String text) {
+        String selected = getSelectedOption(text, M_CODIGO_DESCUENTO_OPTIONS);
+        
+        if (selected == null) {
+            sendText(p.getWhatsappId(), "❌ Por favor selecciona una opción válida usando los botones.");
+            askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
+            return;
+        }
+        
+        if (selected.contains("Sí")) {
+            // Pedir que ingrese el código
+            askWithText(p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
+        } else {
+            // No tiene código, proceder a generar link de pago
+            p.setCodigoDescuento(null);
+            save(p);
+            procesarPago(p);
+        }
+    }
+
+    /**
+     * Handler para cuando el usuario ingresa su código de descuento
+     */
+    private void handleIngresarCodigo(Patient p, String text) {
+        String codigo = text.trim().toUpperCase();
+        
+        if (codigo.isBlank()) {
+            sendText(p.getWhatsappId(), "❌ Por favor escribe un código válido.");
+            return;
+        }
+        
+        // Guardar el código (validación se hará en el backend de pagos)
+        p.setCodigoDescuento(codigo);
+        save(p);
+        
+        log.info("🏷️ Usuario {} ingresó código de descuento: {}", p.getWhatsappId(), codigo);
+        
+        sendText(p.getWhatsappId(), "✅ Código *" + codigo + "* guardado. Validaremos el descuento al procesar tu pago.");
+        
+        // Proceder a generar link de pago
+        procesarPago(p);
+    }
+
+    /**
+     * Procesa el pago: integra con API externa y genera link según método elegido
+     */
+    private void procesarPago(Patient p) {
         p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
         save(p);
 
-        // ========== INTEGRACIÓN CON API EXTERNA ==========
-        log.info("🔗 Iniciando integración con API externa de Elara...");
+        // ========== INTEGRACIÓN CON API EXTERNA: SUBIR FOTOS ==========
+        // Nota: La consulta ya fue registrada antes de pedir las fotos
+        // Ahora solo subimos las fotos si tenemos consultaId
         
-        // 1. Registrar la consulta completa en la API
-        String consultId = registrarConsultaEnApiExterna(p);
-        
-        if (consultId == null) {
-            log.error("❌ No se pudo registrar la consulta en la API externa");
-            // Continuar con el flujo pero notificar al equipo
-            sendText(p.getWhatsappId(),
-                "⚠️ *Advertencia técnica:* Hubo un problema al registrar tu consulta. " +
-                "No te preocupes, nuestro equipo ha sido notificado y procesará tu información manualmente.\n\n" +
-                "Puedes continuar con el pago. 💳"
-            );
-        } else {
-            log.info("✅ Consulta registrada con ID: {}", consultId);
-            
-            // 2. Subir las fotos usando el consultaId
-            boolean fotosSubidas = subirFotosAApiExterna(consultId, p);
+        if (p.getConsultaId() != null && p.getPhotoUrls() != null && !p.getPhotoUrls().isEmpty()) {
+            log.info("📸 Subiendo fotos a la API externa para consultaId: {}", p.getConsultaId());
+            boolean fotosSubidas = subirFotosAApiExterna(p.getConsultaId(), p);
             
             if (!fotosSubidas) {
                 log.warn("⚠️ Las fotos no se pudieron subir a la API externa");
@@ -953,21 +1042,41 @@ public class OnboardingService {
             } else {
                 log.info("✅ Fotos subidas exitosamente a la API externa");
             }
+        } else {
+            log.warn("⚠️ No hay consultaId o fotos para subir a la API externa");
         }
         
         log.info("🔗 Integración con API externa completada");
         // ========== FIN INTEGRACIÓN ==========
 
         // Usar el consultId real si existe, o el whatsappId como fallback
-        String paymentReferenceId = (consultId != null && !consultId.isBlank()) 
-            ? consultId 
+        String paymentReferenceId = (p.getConsultaId() != null && !p.getConsultaId().isBlank()) 
+            ? p.getConsultaId() 
             : p.getWhatsappId();
 
-        String paymentUrl = stripeService.crearPaymentLink(
+        // Generar link de pago según el método elegido
+        String paymentUrl;
+        String metodoPagoNombre;
+        
+        if (p.getMetodoPagoElegido() != null && p.getMetodoPagoElegido() == 1) {
+            // MercadoPago
+            metodoPagoNombre = "Mercado Pago";
+            log.info("💳 Generando link de pago con MercadoPago para {}", p.getWhatsappId());
+            paymentUrl = mercadoPagoService.crearPaymentLink(
                 paymentReferenceId,
                 p.getWhatsappId(),
                 p.getEmail()
-        );
+            );
+        } else {
+            // Stripe (por defecto)
+            metodoPagoNombre = "Stripe";
+            log.info("💳 Generando link de pago con Stripe para {}", p.getWhatsappId());
+            paymentUrl = stripeService.crearPaymentLink(
+                paymentReferenceId,
+                p.getWhatsappId(),
+                p.getEmail()
+            );
+        }
 
         if (paymentUrl == null || paymentUrl.isBlank()) {
             sendText(p.getWhatsappId(), "⚠️ Ocurrió un problema al generar el enlace de pago. Por favor intenta más tarde o escribe *HOLA* para reiniciar.");
@@ -976,15 +1085,25 @@ public class OnboardingService {
             return;
         }
 
+        // Guardar el URL de pago
+        p.setPaymentUrl(paymentUrl);
+        save(p);
+
+        // Mensaje personalizado según el método de pago
+        String mensajePago = String.format(
+            "¡Todo listo! 🎉\n\n" +
+            "Solo falta realizar el pago de tu consulta dermatológica.\n\n" +
+            "💳 Costo: $360 MXN (impuestos incluidos)\n" +
+            "🔒 Pago 100%% seguro procesado por %s\n\n" +
+            "Da clic en el botón para pagar:",
+            metodoPagoNombre
+        );
+
         // Mensaje con botón grande azul
         whatsAppClient.sendCtaUrlButton(
                 p.getWhatsappId(),
-                "¡Todo listo! 🎉\n\n" +
-                        "Solo falta realizar el pago de tu consulta dermatológica.\n\n" +
-                        "💳 Costo: $999 MXN (impuestos incluidos)\n" +
-                        "🔒 Pago 100% seguro procesado por Stripe\n\n" +
-                        "Da clic en el botón para pagar:",
-                "Pagar $999 💳",
+                mensajePago,
+                "Pagar $360 💳",
                 paymentUrl
         );
 
@@ -1377,8 +1496,73 @@ public class OnboardingService {
     // ====================== INTEGRACIÓN CON API EXTERNA DE ELARA ======================
 
     /**
+     * Verifica si el paciente ya existe en la API externa
+     * Se llama después de confirmar el email
+     * 
+     * @param patient Paciente con whatsappId y email
+     */
+    private void verificarPacienteEnApiExterna(Patient patient) {
+        try {
+            log.info("🔍 Verificando paciente en API externa...");
+            log.info("   WhatsApp ID: {}", patient.getWhatsappId());
+            log.info("   Email: {}", patient.getEmail());
+            
+            // Crear request
+            com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.VerifyPatientRequest request =
+                com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.VerifyPatientRequest.builder()
+                    .whatsappId(patient.getWhatsappId())
+                    .email(patient.getEmail())
+                    .build();
+            
+            // Llamar al Feign Client: POST https://www.sv-lara.com/api/patient/verify/
+            com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.response.VerifyPatientResponse response =
+                elaraPatientClient.verifyPatient(request);
+            
+            // Procesar respuesta según nuevo formato
+            if (response != null && response.getCode() != null) {
+                
+                if (response.getCode() == 200) {
+                    log.info("✅ Respuesta exitosa de API externa (code: 200)");
+                    log.info("   Paciente existe: {}", response.getExiste());
+                    
+                    if (response.getExiste() != null && response.getExiste()) {
+                        log.info("👤 Paciente YA EXISTE en la base de datos de Elara");
+                        // Guardar el patientApiId si lo devuelve la API (opcional)
+                        if (response.getPatientId() != null) {
+                            patient.setPatientApiId(response.getPatientId());
+                            save(patient);
+                            log.info("   Patient API ID guardado: {}", response.getPatientId());
+                        }
+                    } else {
+                        log.info("👤 Paciente NUEVO - se registrará al finalizar el flujo");
+                    }
+                    
+                } else if (response.getCode() == 400) {
+                    log.warn("⚠️ Error de validación en API externa (code: 400)");
+                    log.warn("   Tipo: {}", response.getType());
+                    log.warn("   Error: {}", response.getError());
+                    log.info("   Continuando flujo normalmente - paciente se guardará localmente");
+                } else {
+                    log.warn("⚠️ Código inesperado de API externa: {}", response.getCode());
+                }
+                
+            } else {
+                log.warn("⚠️ Respuesta null o sin código al verificar paciente");
+            }
+            
+        } catch (Exception e) {
+            // No bloqueamos el flujo si la verificación falla
+            log.error("❌ Error al verificar paciente en API externa (continuando flujo)", e);
+        }
+        
+        // IMPORTANTE: El paciente SIEMPRE se guarda en H2 (base de datos local)
+        // independientemente de si la API externa responde o no.
+        // Esto asegura que el flujo continúe sin problemas.
+    }
+
+    /**
      * Registra la consulta completa en la API externa
-     * Debe llamarse DESPUÉS de recopilar toda la información y las fotos
+     * Debe llamarse DESPUÉS de recopilar toda la información y ANTES de pedir las fotos
      * 
      * @param patient Paciente con toda la información recopilada
      * @return consultaId generado por la API, o null si falló
@@ -1403,12 +1587,15 @@ public class OnboardingService {
             }
             // TODO: Agregar lógica para menor de edad (3) si aplica
             
+            // Determinar aceptaciones (basadas en el paso inicial de términos)
+            Boolean aceptaTerminos = Boolean.TRUE.equals(patient.getAceptaTerminosYPrivacidad());
+            
             // Construir el request con todos los datos
             com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.RegisterConsultRequest request = 
                 com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.request.RegisterConsultRequest.builder()
                     // Identificación
                     .whatsappId(patient.getWhatsappId())
-                    .consultaId(patient.getConsultaId()) // null si es nuevo, o el ID si es actualización
+                    .consultaId(null) // Siempre null en registro inicial según requerimiento
                     .padecimiento(patient.getPadecimiento())
                     .email(patient.getEmail())
                     .consulta(tipoConsulta)
@@ -1446,18 +1633,18 @@ public class OnboardingService {
                     .usaProtector(patient.getUsaProtector())
                     .statusEmbarazo(patient.getStatusEmbarazo())
                     
-                    // Fotos (URLs locales por ahora, luego se suben a la API)
-                    .photoUrls(patient.getPhotoUrls())
+                    // Fotos: array vacío porque se suben DESPUÉS del registro
+                    .photoUrls(new ArrayList<>())
                     
                     // Notas adicionales
                     .notasAdicionales(patient.getNotasAdicionales())
                     
-                    // Aceptaciones (siempre true porque ya aceptó en el bot)
-                    .aceptaTerminos(true)
-                    .aceptaAvisoPrivacidad(true)
-                    .aceptaConsentimiento(true)
+                    // Aceptaciones basadas en términos iniciales
+                    .aceptaTerminos(aceptaTerminos)
+                    .aceptaAvisoPrivacidad(aceptaTerminos)
+                    .aceptaConsentimiento(aceptaTerminos)
                     
-                    // Pago (aún no procesado)
+                    // Pago (aún no procesado al momento del registro)
                     .pagoProcesado(false)
                     .pagoId(null)
                     
@@ -1467,21 +1654,47 @@ public class OnboardingService {
                     .updatedAt(LocalDateTime.now())
                     .build();
             
-            // Llamar al Feign Client
+            log.info("📋 Request preparado - Enviando a POST /api/consult/registry/");
+            
+            // Llamar al Feign Client: POST https://www.sv-lara.com/api/consult/registry/
             com.bot.elara.Infrastructure.External.Clients.ElaraApi.dto.response.RegisterConsultResponse response = 
                 elaraPatientClient.registerConsult(request);
             
-            // Verificar respuesta
-            if (response != null && response.getCode() == 200 && response.getConsultaId() != null) {
-                log.info("✅ Consulta registrada exitosamente. ID: {}", response.getConsultaId());
+            // Verificar respuesta según formato de la API
+            if (response != null && response.getCode() != null) {
                 
-                // Guardar el consultaId en el paciente local
-                patient.setConsultaId(response.getConsultaId());
-                save(patient);
+                if (response.getCode() == 200) {
+                    // Éxito: {"code": 200, "status": "ok", "mensaje": "...", "consultaId": "..."}
+                    log.info("✅ Consulta registrada exitosamente (code: 200)");
+                    log.info("   Status: {}", response.getStatus());
+                    log.info("   Mensaje: {}", response.getMensaje());
+                    log.info("   Consulta ID: {}", response.getConsultaId());
+                    
+                    if (response.getConsultaId() != null) {
+                        // Guardar el consultaId en el paciente local
+                        patient.setConsultaId(response.getConsultaId());
+                        save(patient);
+                        return response.getConsultaId();
+                    } else {
+                        log.warn("⚠️ Respuesta 200 pero consultaId es null");
+                        return null;
+                    }
+                    
+                } else if (response.getCode() == 400) {
+                    // Error validación: {"code": 400, "type": "validation_error", "mensaje": "..."}
+                    log.error("❌ Error de validación al registrar consulta (code: 400)");
+                    log.error("   Type: {}", response.getType());
+                    log.error("   Mensaje: {}", response.getMensaje());
+                    return null;
+                    
+                } else {
+                    log.error("❌ Código inesperado al registrar consulta: {}", response.getCode());
+                    log.error("   Mensaje: {}", response.getMensaje());
+                    return null;
+                }
                 
-                return response.getConsultaId();
             } else {
-                log.error("❌ Error al registrar consulta: {}", response != null ? response.getMensaje() : "Respuesta null");
+                log.error("❌ Respuesta null o sin código al registrar consulta");
                 return null;
             }
             
