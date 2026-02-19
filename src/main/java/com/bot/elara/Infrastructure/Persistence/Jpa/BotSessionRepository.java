@@ -7,4 +7,6 @@ import java.util.Optional;
 
 public interface BotSessionRepository extends JpaRepository<BotSession, Long> {
     Optional<BotSession> findByWhatsappId(String whatsappId);
+    Optional<BotSession> findByConsultaPublicId(String consultaPublicId);
+
 }

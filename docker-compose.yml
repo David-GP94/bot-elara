@@ -7,18 +7,28 @@ services:
       - "8081:8081"
     environment:
       - SPRING_PROFILES_ACTIVE=sandbox
+
       - DB_HOST=${DB_HOST}
       - DB_NAME=${DB_NAME}
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
+
       - STRIPE_API_KEY=${STRIPE_API_KEY}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+
       - WHATSAPP_SANDBOX_TOKEN=${WHATSAPP_SANDBOX_TOKEN}
-      - INFRA_ENDPOINT_URL=${INFRA_ENDPOINT_URL}
-      - INFRA_API_KEY=${INFRA_API_KEY}
+
       - MERCADOPAGO_ACCESS_TOKEN=${MERCADOPAGO_ACCESS_TOKEN}
       - MERCADOPAGO_PUBLIC_KEY=${MERCADOPAGO_PUBLIC_KEY}
       - MERCADOPAGO_WEBHOOK_URL=${MERCADOPAGO_WEBHOOK_URL}
+
+      # 🔥 Variables para integración con Django
+      - DJANGO_API_URL=${DJANGO_API_URL}
+      - DJANGO_API_KEY=${DJANGO_API_KEY}
+
+      # Variables para comunicación interna entre bots(si es necesario)
+      - BOT_INTERNAL_SECRET=${BOT_INTERNAL_SECRET}
+
     volumes:
       - ./data:/app/data
     restart: "no"

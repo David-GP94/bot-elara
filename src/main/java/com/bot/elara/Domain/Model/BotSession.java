@@ -31,7 +31,25 @@ public class BotSession {
 
     private Boolean pendingInactivityResponse;
 
+    private Long consultaId;
+
+    @Column(unique = true)
+    private String consultaPublicId;
+
+    private Boolean paymentConfirmed = false;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+
+    @PrePersist
+    public void onCreate() {
+        this.createdAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    public void onUpdate() {
+        this.updatedAt = LocalDateTime.now();
+    }
 }
+
 
