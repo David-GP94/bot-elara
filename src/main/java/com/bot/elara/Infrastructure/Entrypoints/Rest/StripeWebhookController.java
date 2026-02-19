@@ -1,9 +1,11 @@
 package com.bot.elara.Infrastructure.Entrypoints.Rest;
 
 import com.bot.elara.Application.Service.OnboardingService;
+import com.bot.elara.Domain.Model.BotSession;
 import com.bot.elara.Domain.Model.OnboardingStep;
 import com.bot.elara.Domain.Model.Patient;
 import com.bot.elara.Domain.Repository.PatientRepository;
+import com.bot.elara.Infrastructure.Persistence.Jpa.BotSessionRepository;
 import com.stripe.exception.SignatureVerificationException;
 import com.stripe.model.Event;
 import com.stripe.model.checkout.Session;
@@ -12,11 +14,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/stripe")
@@ -28,6 +26,7 @@ public class StripeWebhookController {
     private String stripeWebhookSecret;
 
     private final PatientRepository patientRepository;
+    private final BotSessionRepository botSessionRepository;   // ✅ NUEVO
     private final OnboardingService onboardingService;
 
     @PostMapping("/webhook")
@@ -46,40 +45,53 @@ public class StripeWebhookController {
         }
 
         if ("checkout.session.completed".equals(event.getType())) {
-            Session session = (Session) event.getData().getObject();
-            var metadata = session.getMetadata();
+
+            Session sessionStripe = (Session) event.getData().getObject();
+            var metadata = sessionStripe.getMetadata();
 
             if (metadata == null || !"whatsapp_bot".equals(metadata.get("channel"))) {
                 log.info("Evento ignorado - no pertenece al canal whatsapp_bot");
                 return ResponseEntity.ok().build();
             }
 
-            String whatsappId = metadata != null ? metadata.get("whatsapp_id") : "5215545830244";  // ← Tu número fijo para pruebas
+            String whatsappId = metadata.get("whatsapp_id");
+
             if (whatsappId == null || whatsappId.isBlank()) {
-                log.warn("No hay whatsapp_id, usando default para pruebas");
-                whatsappId = "5215545830244";
+                log.warn("No hay whatsapp_id en metadata");
+                return ResponseEntity.ok().build();
             }
 
             Patient patient = patientRepository.findByWhatsappId(whatsappId).orElse(null);
+
             if (patient == null) {
                 log.warn("Paciente no encontrado para whatsapp_id: {}", whatsappId);
                 return ResponseEntity.ok().build();
             }
 
-            // Idempotencia: evitar procesar dos veces
+            // 🔁 Idempotencia
             if (Boolean.TRUE.equals(patient.getPagoProcesado())) {
                 log.info("Pago ya procesado previamente para {}", whatsappId);
                 return ResponseEntity.ok().build();
             }
 
-            log.info("Pago exitoso procesado para paciente ID: {} (WhatsApp: {})", "ID-CLIENTE-UNICO", whatsappId);  //TODO: AQUI VA EL ID DE CLIEBNTE UNICO
-            // Marcar como pagado y completado
+            log.info("Pago exitoso procesado para WhatsApp: {}", whatsappId);
+
+            // ✅ Marcar paciente como pagado
             patient.setPagoProcesado(true);
-            patient.setCurrentStep(OnboardingStep.COMPLETED);
             patientRepository.save(patient);
 
-            // Enviar mensaje de éxito usando el método público del servicio
-            String panelUrl = "https://panel.elara.com/patient/" + whatsappId; // Ajusta si usas otro formato
+            // ✅ Actualizar estado en BotSession (NO en Patient)
+            BotSession botSession = botSessionRepository
+                    .findByWhatsappId(whatsappId)
+                    .orElse(null);
+
+            if (botSession != null) {
+                botSession.setCurrentStep(OnboardingStep.COMPLETED);
+                botSessionRepository.save(botSession);
+            }
+
+            // ✅ Enviar mensaje de éxito
+            String panelUrl = "https://panel.elara.com/patient/" + whatsappId;
             onboardingService.enviarMensajePagoExitoso(whatsappId, panelUrl);
         }
 

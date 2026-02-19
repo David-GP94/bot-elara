@@ -1,12 +1,15 @@
 package com.bot.elara.Application.Service;
 
+import com.bot.elara.Domain.Model.BotSession;
 import com.bot.elara.Domain.Model.OnboardingStep;
 import com.bot.elara.Domain.Model.Patient;
 import com.bot.elara.Domain.Repository.PatientRepository;
 import com.bot.elara.Infrastructure.External.Storage.S3Service;
 import com.bot.elara.Infrastructure.External.Whatsapp.Model.Image;
 import com.bot.elara.Infrastructure.External.Whatsapp.WhatsAppCloudApiClient;
+import com.bot.elara.Infrastructure.Persistence.Jpa.BotSessionRepository;
 import com.bot.elara.Util.DateParserUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -18,6 +21,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import static com.bot.elara.Domain.Constants.MessageConstants.*;
 
@@ -50,194 +55,217 @@ public class OnboardingService {
     private static final String AVISO_PRIVACIDAD_URL = "https://tu-dominio.com/docs/aviso-de-privacidad.pdf";
     private static final String CONSENTIMIENTO_URL = "https://tu-dominio.com/docs/consentimiento-telemedicina.pdf";
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    private final BotSessionRepository botSessionRepository;
+
 
 
     // Método para programar el recordatorio
     private void scheduleInactivityReminder(String whatsappId) {
-        log.info(">>> scheduleInactivityReminder llamado para {}", whatsappId); // ← LOG
 
-        java.util.concurrent.ScheduledFuture<?> existing = inactivityReminders.remove(whatsappId);
-        if (existing != null && !existing.isDone()) {
-            existing.cancel(false);
-            log.info("Recordatorio anterior cancelado para {}", whatsappId);
-        }
+        BotSession session = botSessionRepository.findByWhatsappId(whatsappId).orElse(null);
 
-        Patient p = patientRepository.findByWhatsappId(whatsappId).orElse(null);
-        if (p == null || p.getCurrentStep() == OnboardingStep.COMPLETED ||
-                p.getCurrentStep() == OnboardingStep.WELCOME) {
-            log.info("No se programa recordatorio - paso: {}", p != null ? p.getCurrentStep() : "null");
+        if (session == null ||
+                session.getCurrentStep() == OnboardingStep.COMPLETED ||
+                session.getCurrentStep() == OnboardingStep.WELCOME) {
             return;
         }
 
-        log.info("Programando recordatorio para {} en {} minuto(s)", whatsappId, INACTIVITY_TIMEOUT_MINUTES);
+        ScheduledFuture<?> existing = inactivityReminders.remove(whatsappId);
+        if (existing != null && !existing.isDone()) {
+            existing.cancel(false);
+        }
 
-        java.util.concurrent.ScheduledFuture<?> future = reminderScheduler.schedule(() -> {
-            log.info(">>> Timer expirado, ejecutando sendReminder para {}", whatsappId); // ← LOG
+        ScheduledFuture<?> future = reminderScheduler.schedule(() -> {
             inactivityReminderService.sendReminder(whatsappId);
             inactivityReminders.remove(whatsappId);
-        }, INACTIVITY_TIMEOUT_MINUTES, java.util.concurrent.TimeUnit.MINUTES);
+        }, INACTIVITY_TIMEOUT_MINUTES, TimeUnit.MINUTES);
 
         inactivityReminders.put(whatsappId, future);
-        log.info("Recordatorio programado exitosamente. Total activos: {}", inactivityReminders.size());
     }
 
     // ====================== ENTRY POINTS ======================
 
     public void processText(String from, String text) {
-        Patient patient = getOrCreatePatient(from);
 
-        // Manejar respuesta de recordatorio de inactividad
-        if (Boolean.TRUE.equals(patient.getPendingInactivityResponse())) {
-            patient.setPendingInactivityResponse(false);
-            save(patient);
+        String normalizedFrom = normalize(from);
 
-            String normalized = text.toLowerCase().trim();
-            if (normalized.contains("no") || normalized.contains("cancelar")) {
-                sendText(from, "😊 Entendido. Proceso terminado, si deseas reiniciar, escribe *HOLA*.");
-                patient.setCurrentStep(OnboardingStep.WELCOME);
-                save(patient);
-                return;
-            }
+        Patient patient = getOrCreatePatient(normalizedFrom);
+        BotSession session = getOrCreateSession(normalizedFrom);
 
-            // Si quiere continuar → reenviar la pregunta del paso actual
-            resendCurrentStepQuestion(patient);
-            scheduleInactivityReminder(from);
-            return;
-
-        }
-        scheduleInactivityReminder(from);
+        scheduleInactivityReminder(normalizedFrom);
 
         text = text.trim();
 
-        switch (patient.getCurrentStep()) {
-            case WELCOME -> handleWelcomeMessage(patient);
-            case START -> handleStart(patient, text);
-            case ASK_PADECIMIENTO -> handlePadecimiento(patient, text);
-            case CONFIRM_PADECIMIENTO -> handleConfirmPadecimiento(patient, text);
-            case ASK_EMAIL -> handleEmail(patient, text);
-            case CONFIRM_EMAIL -> handleConfirmEmail(patient, text);
-            case ASK_MAYORIA_EDAD -> handleMayoriaEdad(patient, text);
-            case ASK_NOMBRE -> handleNombre(patient, text);
-            case ASK_GENERO -> handleGenero(patient, text);
-            case ASK_FECHA_NAC -> handleFechaNac(patient, text);
-            case ASK_PESO -> handlePeso(patient, text);
-            case ASK_ALTURA -> handleAltura(patient, text);
-            case ASK_FUMA -> handleFuma(patient, text);
-            case ASK_DESDE_CUANDO -> handleDesdeCuando(patient, text);
-            case ASK_GRAVEDAD -> handleGravedad(patient, text);
-            case ASK_TRATAMIENTO_ANTERIOR -> handleTratamientoAnterior(patient, text);
-            case ASK_TRATAMIENTOS_USADOS -> handleTratamientosUsados(patient, text);
-            case ASK_ALERGIAS -> handleAlergias(patient, text);
-            case ASK_ALERGIAS_DETALLES -> handleAlergiasDetalles(patient, text);
-            case ASK_MEDICAMENTOS -> handleMedicamentos(patient, text);
-            case ASK_MEDICAMENTOS_DETALLES -> handleMedicamentosDetalles(patient, text);
-            case ASK_ENFERMEDADES -> handleEnfermedades(patient, text);
-            case ASK_ENFERMEDADES_DETALLES -> handleEnfermedadesDetalles(patient, text);
-            case ASK_MEJORA_PRINCIPAL -> handleMejoraPrincipal(patient, text);
-            case ASK_TIPO_PIEL -> handleTipoPiel(patient, text);
-            case ASK_SENSIBILIDAD_PIEL -> handleSensibilidadPiel(patient, text);
-            case ASK_EXPOSICION_SOL -> handleExposicionSol(patient, text);
-            case ASK_USA_PROTECTOR -> handleUsaProtector(patient, text);
-            case ASK_AREA_CAIDA -> handleAreaCaida(patient, text);
-            case ASK_ANTECEDENTES_FAMILIA -> handleAntecedentesFamilia(patient, text);
-            case ASK_STATUS_EMBARAZO -> handleStatusEmbarazo(patient, text);
-            case ASK_NOTAS_ADICIONALES -> handleNotasAdicionales(patient, text);
-            case ASK_NOTAS_ADICIONALES_DETALLES -> handleNotasAdicionalesDetalles(patient, text);
-            case ASK_FOTOS -> handleFotos(patient, text);
-            case ASK_MAS_FOTOS -> handleMasFotos(patient, text);
-            case ASK_EXCESO_FOTOS -> handleExcesoFotos(patient, text);
-            case ASK_TERMINOS -> handleTerminos(patient, text);
-            case ASK_AVISO_PRIVACIDAD -> handleAvisoPrivacidad(patient, text);
-            case ASK_CONSENTIMIENTO -> handleConsentimiento(patient, text);
-            case PROCESS_PAYMENT -> {
-                // Mensaje de espera mientras el webhook confirma
-                sendText(from,
-                        "⏳ Tu pago está siendo procesado...\n\n" +
-                                "Te avisaremos automáticamente cuando sea confirmado.\n" +
-                                "No es necesario escribir nada más.\n\n" +
-                                "¡Gracias por tu paciencia! 💙");
+        // ===== INTERCEPTOR DE RECORDATORIO =====
+        if (Boolean.TRUE.equals(patient.getPendingInactivityResponse())) {
+
+            String normalizedText = text.trim();
+
+            if (normalizedText.equalsIgnoreCase("Sí") ||
+                    normalizedText.equalsIgnoreCase("Si") ||
+                    normalizedText.contains("continuar")) {
+
+                patient.setPendingInactivityResponse(false);
+                save(patient);
+
+                resendCurrentStepQuestion(session, patient);
+                return;
             }
-            case ASK_METODO_PAGO -> handleMetodoPago(patient, text);
-            case ASK_CODIGO_DESCUENTO -> handleCodigoDescuento(patient, text);
-            case ASK_INGRESAR_CODIGO -> handleIngresarCodigo(patient, text);
-            case COMPLETED ->
-                    sendText(from, "¡Tu consulta ya está completada! Tu dermatóloga la revisará pronto. Te avisaremos cuando esté lista.");
-            default -> sendText(from, "Algo salió mal. Escribe *HOLA* para reiniciar el proceso.");
+
+            if (normalizedText.toLowerCase().contains("cancelar")) {
+
+                patient.setPendingInactivityResponse(false);
+                save(patient);
+
+                session.setCurrentStep(OnboardingStep.WELCOME);
+                saveSession(session);
+
+                sendText(patient.getWhatsappId(),
+                        "Consulta cancelada.\n\nSi deseas iniciar nuevamente escribe *HOLA*.");
+
+                return;
+            }
+        }
+
+        // ===== INTERCEPTOR GLOBAL HOLA =====
+        if (text.equalsIgnoreCase("hola")) {
+
+            session.setCurrentStep(OnboardingStep.WELCOME);
+            saveSession(session);
+
+            patient.setPendingInactivityResponse(false);
+            save(patient);
+
+            handleWelcomeMessage(session, patient);
+            return;
+        }
+
+        switch (session.getCurrentStep()) {
+
+            case WELCOME -> handleWelcomeMessage(session, patient);
+            case START -> handleStart(session, patient, text);
+            case ASK_PADECIMIENTO -> handlePadecimiento(session, patient, text);
+            case CONFIRM_PADECIMIENTO -> handleConfirmPadecimiento(session, patient, text);
+            case ASK_EMAIL -> handleEmail(session, patient, text);
+            case CONFIRM_EMAIL -> handleConfirmEmail(session, patient, text);
+            case ASK_MAYORIA_EDAD -> handleMayoriaEdad(session, patient, text);
+            case ASK_NOMBRE -> handleNombre(session, patient, text);
+            case ASK_GENERO -> handleGenero(session, patient, text);
+            case ASK_FECHA_NAC -> handleFechaNac(session, patient, text);
+            case ASK_PESO -> handlePeso(session, patient, text);
+            case ASK_ALTURA -> handleAltura(session, patient, text);
+            case ASK_FUMA -> handleFuma(session, patient, text);
+            case ASK_DESDE_CUANDO -> handleDesdeCuando(session, patient, text);
+            case ASK_GRAVEDAD -> handleGravedad(session, patient, text);
+            case ASK_TRATAMIENTO_ANTERIOR -> handleTratamientoAnterior(session, patient, text);
+            case ASK_TRATAMIENTOS_USADOS -> handleTratamientosUsados(session, patient, text);
+            case ASK_ALERGIAS -> handleAlergias(session, patient, text);
+            case ASK_ALERGIAS_DETALLES -> handleAlergiasDetalles(session, patient, text);
+            case ASK_MEDICAMENTOS -> handleMedicamentos(session, patient, text);
+            case ASK_MEDICAMENTOS_DETALLES -> handleMedicamentosDetalles(session, patient, text);
+            case ASK_ENFERMEDADES -> handleEnfermedades(session, patient, text);
+            case ASK_ENFERMEDADES_DETALLES -> handleEnfermedadesDetalles(session, patient, text);
+            case ASK_MEJORA_PRINCIPAL -> handleMejoraPrincipal(session, patient, text);
+            case ASK_TIPO_PIEL -> handleTipoPiel(session, patient, text);
+            case ASK_SENSIBILIDAD_PIEL -> handleSensibilidadPiel(session, patient, text);
+            case ASK_EXPOSICION_SOL -> handleExposicionSol(session, patient, text);
+            case ASK_USA_PROTECTOR -> handleUsaProtector(session, patient, text);
+            case ASK_AREA_CAIDA -> handleAreaCaida(session, patient, text);
+            case ASK_ANTECEDENTES_FAMILIA -> handleAntecedentesFamilia(session, patient, text);
+            case ASK_STATUS_EMBARAZO -> handleStatusEmbarazo(session, patient, text);
+            case ASK_NOTAS_ADICIONALES -> handleNotasAdicionales(session, patient, text);
+            case ASK_NOTAS_ADICIONALES_DETALLES -> handleNotasAdicionalesDetalles(session, patient, text);
+            case ASK_FOTOS -> handleFotos(session, patient, text);
+            case ASK_MAS_FOTOS -> handleMasFotos(session, patient, text);
+            case ASK_EXCESO_FOTOS -> handleExcesoFotos(session, patient, text);
+            case ASK_TERMINOS -> handleTerminos(session, patient, text);
+            case ASK_AVISO_PRIVACIDAD -> handleAvisoPrivacidad(session, patient, text);
+            case ASK_CONSENTIMIENTO -> handleConsentimiento(session, patient, text);
+            case ASK_METODO_PAGO -> handleMetodoPago(session, patient, text);
+            case ASK_CODIGO_DESCUENTO -> handleCodigoDescuento(session, patient, text);
+            case ASK_INGRESAR_CODIGO -> handleIngresarCodigo(session, patient, text);
+            case PROCESS_PAYMENT -> handlePayment(session, patient, text);
+            case COMPLETED -> sendText(normalizedFrom, "Tu consulta ya está completada.");
+            default -> sendText(normalizedFrom, "Escribe *HOLA* para reiniciar.");
         }
     }
+
 
 
     /**
      * Reenvía la pregunta del paso actual cuando el usuario retoma el flujo
      */
-    private void resendCurrentStepQuestion(Patient p) {
+    private void resendCurrentStepQuestion(BotSession session, Patient p) {
         String from = p.getWhatsappId();
 
-        switch (p.getCurrentStep()) {
+        switch (session.getCurrentStep()) {
             case ASK_PADECIMIENTO ->
-                    askWithList(p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
+                    askWithList(session, p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
             case CONFIRM_PADECIMIENTO ->
-                    askWithList(p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
-            case ASK_EMAIL -> askWithText(p, OnboardingStep.ASK_EMAIL, M_2);
-            case CONFIRM_EMAIL -> askWithText(p, OnboardingStep.ASK_EMAIL, M_2);
-            case ASK_MAYORIA_EDAD -> askWithButtons(p, OnboardingStep.ASK_MAYORIA_EDAD, M_4, M_4_OPTIONS);
+                    askWithList(session, p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
+            case ASK_EMAIL -> askWithText(session, p, OnboardingStep.ASK_EMAIL, M_2);
+            case CONFIRM_EMAIL -> askWithText(session, p, OnboardingStep.ASK_EMAIL, M_2);
+            case ASK_MAYORIA_EDAD -> askWithButtons(session, p, OnboardingStep.ASK_MAYORIA_EDAD, M_4, M_4_OPTIONS);
             case ASK_NOMBRE ->
-                    askWithText(p, OnboardingStep.ASK_NOMBRE, p.getConsultaParaOtraPersona() ? "¿Cuál es el nombre completo de la persona para quien es la consulta?" : M_5);
-            case ASK_GENERO -> askWithButtons(p, OnboardingStep.ASK_GENERO, M_6, M_6_OPTIONS);
-            case ASK_FECHA_NAC -> askWithText(p, OnboardingStep.ASK_FECHA_NAC, M_7);
-            case ASK_PESO -> askWithText(p, OnboardingStep.ASK_PESO, M_8);
-            case ASK_ALTURA -> askWithText(p, OnboardingStep.ASK_ALTURA, M_9);
-            case ASK_FUMA -> askWithButtons(p, OnboardingStep.ASK_FUMA, M_10, M_10_OPTIONS);
+                    askWithText(session, p, OnboardingStep.ASK_NOMBRE, p.getConsultaParaOtraPersona() ? "¿Cuál es el nombre completo de la persona para quien es la consulta?" : M_5);
+            case ASK_GENERO -> askWithButtons(session, p, OnboardingStep.ASK_GENERO, M_6, M_6_OPTIONS);
+            case ASK_FECHA_NAC -> askWithText(session, p, OnboardingStep.ASK_FECHA_NAC, M_7);
+            case ASK_PESO -> askWithText(session, p, OnboardingStep.ASK_PESO, M_8);
+            case ASK_ALTURA -> askWithText(session, p, OnboardingStep.ASK_ALTURA, M_9);
+            case ASK_FUMA -> askWithButtons(session, p, OnboardingStep.ASK_FUMA, M_10, M_10_OPTIONS);
             case ASK_DESDE_CUANDO ->
-                    askWithList(p, OnboardingStep.ASK_DESDE_CUANDO, M_11, "Elegir tiempo", M_11_OPTIONS, "desde_cuando");
+                    askWithList(session, p, OnboardingStep.ASK_DESDE_CUANDO, M_11, "Elegir tiempo", M_11_OPTIONS, "desde_cuando");
             case ASK_GRAVEDAD -> {
                 var options = getGravedadOptions(p.getPadecimiento());
                 if (options.size() > 3) {
-                    askWithList(p, OnboardingStep.ASK_GRAVEDAD, getGravedadMessage(p.getPadecimiento()), "👉Seleccionar opción", options, "gravedad_" + p.getPadecimiento().toLowerCase().replace(" ", "_"));
+                    askWithList(session, p, OnboardingStep.ASK_GRAVEDAD, getGravedadMessage(p.getPadecimiento()), "👉Seleccionar opción", options, "gravedad_" + p.getPadecimiento().toLowerCase().replace(" ", "_"));
                 } else {
-                    askWithButtons(p, OnboardingStep.ASK_GRAVEDAD, getGravedadMessage(p.getPadecimiento()), options);
+                    askWithButtons(session, p, OnboardingStep.ASK_GRAVEDAD, getGravedadMessage(p.getPadecimiento()), options);
                 }
             }
             case ASK_TRATAMIENTO_ANTERIOR ->
-                    askWithButtons(p, OnboardingStep.ASK_TRATAMIENTO_ANTERIOR, M_13, M_13_OPTIONS);
-            case ASK_TRATAMIENTOS_USADOS -> askWithText(p, OnboardingStep.ASK_TRATAMIENTOS_USADOS, M_14);
-            case ASK_ALERGIAS -> askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
-            case ASK_ALERGIAS_DETALLES -> askWithText(p, OnboardingStep.ASK_ALERGIAS_DETALLES, M_16);
-            case ASK_MEDICAMENTOS -> askWithButtons(p, OnboardingStep.ASK_MEDICAMENTOS, M_17, M_17_OPTIONS);
-            case ASK_MEDICAMENTOS_DETALLES -> askWithText(p, OnboardingStep.ASK_MEDICAMENTOS_DETALLES, M_18);
-            case ASK_ENFERMEDADES -> askWithButtons(p, OnboardingStep.ASK_ENFERMEDADES, M_29, M_29_OPTIONS);
-            case ASK_ENFERMEDADES_DETALLES -> askWithText(p, OnboardingStep.ASK_ENFERMEDADES_DETALLES, M_43);
+                    askWithButtons(session, p, OnboardingStep.ASK_TRATAMIENTO_ANTERIOR, M_13, M_13_OPTIONS);
+            case ASK_TRATAMIENTOS_USADOS -> askWithText(session, p, OnboardingStep.ASK_TRATAMIENTOS_USADOS, M_14);
+            case ASK_ALERGIAS -> askWithButtons(session, p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
+            case ASK_ALERGIAS_DETALLES -> askWithText(session, p, OnboardingStep.ASK_ALERGIAS_DETALLES, M_16);
+            case ASK_MEDICAMENTOS -> askWithButtons(session,p, OnboardingStep.ASK_MEDICAMENTOS, M_17, M_17_OPTIONS);
+            case ASK_MEDICAMENTOS_DETALLES -> askWithText(session, p, OnboardingStep.ASK_MEDICAMENTOS_DETALLES, M_18);
+            case ASK_ENFERMEDADES -> askWithButtons(session, p, OnboardingStep.ASK_ENFERMEDADES, M_29, M_29_OPTIONS);
+            case ASK_ENFERMEDADES_DETALLES -> askWithText(session, p, OnboardingStep.ASK_ENFERMEDADES_DETALLES, M_43);
             case ASK_MEJORA_PRINCIPAL ->
-                    askWithList(p, OnboardingStep.ASK_MEJORA_PRINCIPAL, M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
+                    askWithList(session, p, OnboardingStep.ASK_MEJORA_PRINCIPAL, M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
             case ASK_TIPO_PIEL ->
-                    askWithList(p, OnboardingStep.ASK_TIPO_PIEL, M_27, "👉Seleccionar tipo", M_27_OPTIONS, "tipo_piel");
+                    askWithList(session, p, OnboardingStep.ASK_TIPO_PIEL, M_27, "👉Seleccionar tipo", M_27_OPTIONS, "tipo_piel");
             case ASK_SENSIBILIDAD_PIEL ->
-                    askWithList(p, OnboardingStep.ASK_SENSIBILIDAD_PIEL, M_28, "👉Seleccionar opción", M_28_OPTIONS, "sensibilidad_piel");
+                    askWithList(session, p, OnboardingStep.ASK_SENSIBILIDAD_PIEL, M_28, "👉Seleccionar opción", M_28_OPTIONS, "sensibilidad_piel");
             case ASK_EXPOSICION_SOL ->
-                    askWithList(p, OnboardingStep.ASK_EXPOSICION_SOL, M_30, "👉Seleccionar opción", M_30_OPTIONS, "exposicion_sol");
+                    askWithList(session, p, OnboardingStep.ASK_EXPOSICION_SOL, M_30, "👉Seleccionar opción", M_30_OPTIONS, "exposicion_sol");
             case ASK_USA_PROTECTOR ->
-                    askWithList(p, OnboardingStep.ASK_USA_PROTECTOR, M_31, "👉Seleccionar opción", M_31_OPTIONS, "uso-protector");
-            case ASK_AREA_CAIDA -> askWithButtons(p, OnboardingStep.ASK_AREA_CAIDA, M_34, M_34_OPTIONS);
+                    askWithList(session, p, OnboardingStep.ASK_USA_PROTECTOR, M_31, "👉Seleccionar opción", M_31_OPTIONS, "uso-protector");
+            case ASK_AREA_CAIDA -> askWithButtons(session, p, OnboardingStep.ASK_AREA_CAIDA, M_34, M_34_OPTIONS);
             case ASK_ANTECEDENTES_FAMILIA ->
-                    askWithList(p, OnboardingStep.ASK_ANTECEDENTES_FAMILIA, M_35, "👉Seleccionar opción", M_35_OPTIONS, "antecedentes_familia");
+                    askWithList(session, p, OnboardingStep.ASK_ANTECEDENTES_FAMILIA, M_35, "👉Seleccionar opción", M_35_OPTIONS, "antecedentes_familia");
             case ASK_STATUS_EMBARAZO ->
-                    askWithList(p, OnboardingStep.ASK_STATUS_EMBARAZO, M_33, "👉Seleccionar opción", M_33_OPTIONS, "status_embarazo");
+                    askWithList(session, p, OnboardingStep.ASK_STATUS_EMBARAZO, M_33, "👉Seleccionar opción", M_33_OPTIONS, "status_embarazo");
             case ASK_NOTAS_ADICIONALES ->
-                    askWithButtons(p, OnboardingStep.ASK_NOTAS_ADICIONALES, getNotasMessage(p.getPadecimiento()), M_15_OPTIONS);
-            case ASK_NOTAS_ADICIONALES_DETALLES -> askWithText(p, OnboardingStep.ASK_NOTAS_ADICIONALES_DETALLES, M_44);
-            case ASK_FOTOS -> askWithButtons(p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
+                    askWithButtons(session, p, OnboardingStep.ASK_NOTAS_ADICIONALES, getNotasMessage(p.getPadecimiento()), M_15_OPTIONS);
+            case ASK_NOTAS_ADICIONALES_DETALLES -> askWithText(session, p, OnboardingStep.ASK_NOTAS_ADICIONALES_DETALLES, M_44);
+            case ASK_FOTOS -> askWithButtons(session, p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
             case ASK_EXCESO_FOTOS ->
-                    askWithButtons(p, OnboardingStep.ASK_EXCESO_FOTOS, M_EXCESO_FOTOS, M_EXCESO_FOTOS_OPTIONS);
+                    askWithButtons(session, p, OnboardingStep.ASK_EXCESO_FOTOS, M_EXCESO_FOTOS, M_EXCESO_FOTOS_OPTIONS);
             case ASK_MAS_FOTOS -> sendText(from, M_21);
             case PROCESS_PAYMENT -> {
                 // Reenviamos el enlace del método que eligió
                 if (p.getMetodoPagoElegido() != null && p.getMetodoPagoElegido() == 1) {
-                    goToStripePayment(p);
+                    goToStripePayment(session,p);
                 } else if (p.getMetodoPagoElegido() != null && p.getMetodoPagoElegido() == 2) {
-                    goToPaymentMercadoPago(p);
+                    goToPaymentMercadoPago(session, p);
                 } else {
                     // Seguridad: si por algún motivo no sabe el método, volvemos al menú
                     askWithListSection(
+                            session,
                             p,
                             OnboardingStep.ASK_METODO_PAGO,
                             "⏰ ¡Hola de nuevo!\n\nEstábamos eligiendo el método de pago.\n\n¿En cuál prefieres pagar?",
@@ -250,6 +278,7 @@ public class OnboardingService {
             }
             case ASK_METODO_PAGO -> {
                 askWithListSection(
+                        session,
                         p,
                         OnboardingStep.ASK_METODO_PAGO,
                         "¡Perfecto! Ya tenemos tus fotos \n\nElige tu método de pago preferido:",
@@ -260,86 +289,110 @@ public class OnboardingService {
                 );
             }
             case ASK_CODIGO_DESCUENTO ->
-                    askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
+                    askWithButtons(session, p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
 
             case ASK_INGRESAR_CODIGO ->
-                    askWithText(p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
+                    askWithText(session, p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
             default -> sendText(from, "Continuemos donde te quedaste. ¿En qué puedo ayudarte?");
         }
     }
 
 
     public void processImage(String from, Image image) {
-        // Obtener lock exclusivo para este usuario
-        Object lock = userLocks.computeIfAbsent(from, k -> new Object());
+        String normalizedFrom = normalize(from);
+        Object lock = userLocks.computeIfAbsent(normalizedFrom, k -> new Object());
 
         synchronized (lock) {
-            processImageSync(from, image);
+            processImageSync(normalizedFrom, image);
         }
     }
 
     private void processImageSync(String from, Image image) {
-        // Re-cargar paciente FRESCO dentro del bloque sincronizado
+
+        // 🔹 1. Cargar sesión (flujo)
+        BotSession session = getOrCreateSession(from);
+
+        // 🔹 2. Cargar paciente (datos clínicos)
         Patient p = patientRepository.findByWhatsappId(from)
                 .orElseGet(() -> getOrCreatePatient(from));
 
-        // NUEVA VALIDACIÓN: Si ya está en ASK_EXCESO_FOTOS, ignorar silenciosamente
-        if (p.getCurrentStep() == OnboardingStep.ASK_EXCESO_FOTOS) {
+        OnboardingStep currentStep = session.getCurrentStep();
+
+        // 🔹 3. Si ya está en exceso de fotos → ignorar
+        if (currentStep == OnboardingStep.ASK_EXCESO_FOTOS) {
             log.info("Imagen ignorada para {} - esperando respuesta de exceso de fotos", from);
-            return; // No enviar nada, solo ignorar
+            return;
         }
 
-        // Validar paso correcto
-        if (p.getCurrentStep() != OnboardingStep.ASK_MAS_FOTOS) {
-            log.warn("Imagen recibida fuera del flujo de fotos. Paso actual: {}", p.getCurrentStep());
+        // 🔹 4. Validar paso correcto
+        if (currentStep != OnboardingStep.ASK_MAS_FOTOS) {
+            log.warn("Imagen recibida fuera del flujo. Paso actual: {}", currentStep);
             sendText(from, "⚠️ No se esperaban imágenes en este momento. Por favor sigue el flujo actual.");
             return;
         }
 
-        // Validar límite con datos FRESCOS
+        // 🔹 5. Validar límite actual
         int currentCount = p.getPhotoUrls() != null ? p.getPhotoUrls().size() : 0;
+
         if (currentCount >= 5) {
             log.info("Imagen ignorada para {} - ya tiene {} fotos", from, currentCount);
 
-            // Cancelar tareas pendientes
-            java.util.concurrent.ScheduledFuture<?> existing = pendingResponses.remove(from);
+            ScheduledFuture<?> existing = pendingResponses.remove(from);
             if (existing != null && !existing.isDone()) {
                 existing.cancel(false);
             }
 
-            // Enviar mensaje y opciones
-            askWithButtons(p, OnboardingStep.ASK_EXCESO_FOTOS, M_EXCESO_FOTOS, M_EXCESO_FOTOS_OPTIONS);
+            // 🔥 Transición de flujo vive en session
+            session.setCurrentStep(OnboardingStep.ASK_EXCESO_FOTOS);
+            saveSession(session);
+
+            sendButtons(
+                    p,
+                    M_EXCESO_FOTOS,
+                    M_EXCESO_FOTOS_OPTIONS
+            );
+
             return;
         }
 
-
-        // Guardar imagen
+        // 🔹 6. Guardar imagen
         LocalDateTime now = LocalDateTime.now();
         String mockUrl = "https://mock-fotos.com/foto_" + image.getId() + ".jpg";
+
         p.getPhotoUrls().add(mockUrl);
         p.setLastImageReceivedAt(now);
 
-        // FLUSH inmediato para que el siguiente hilo vea el cambio
         patientRepository.save(p);
         patientRepository.flush();
 
         int newCount = p.getPhotoUrls().size();
+
         log.info("Imagen {} de 5 recibida para {} → {}", newCount, from, mockUrl);
 
-        // Si alcanzó el límite, avanzar directo
+        // 🔹 7. Si alcanzó límite → avanzar flujo
         if (newCount >= 5) {
-            java.util.concurrent.ScheduledFuture<?> existing = pendingResponses.remove(from);
+
+            ScheduledFuture<?> existing = pendingResponses.remove(from);
             if (existing != null && !existing.isDone()) {
                 existing.cancel(false);
             }
-            askWithButtons(p, OnboardingStep.ASK_EXCESO_FOTOS,
+
+            session.setCurrentStep(OnboardingStep.ASK_EXCESO_FOTOS);
+            saveSession(session);
+
+            sendButtons(
+                    p,
                     "✅ 5 imagen(es) guardada(s) correctamente.\n📊 Total: 5 de 5\n\n⚠️ Has alcanzado el límite máximo.",
-                    M_EXCESO_FOTOS_OPTIONS);
+                    M_EXCESO_FOTOS_OPTIONS
+            );
+
             return;
         }
 
+        // 🔹 8. Programar respuesta diferida
         scheduleImageResponse(from);
     }
+
 
 
     private void scheduleImageResponse(String whatsappId) {
@@ -362,7 +415,10 @@ public class OnboardingService {
     public void sendDelayedImageResponse(String whatsappId) {
         try {
             Patient p = patientRepository.findByWhatsappId(whatsappId).orElse(null);
-            if (p == null || p.getCurrentStep() != OnboardingStep.ASK_MAS_FOTOS) return;
+            BotSession session = botSessionRepository.findByWhatsappId(whatsappId).orElse(null);
+
+            if (p == null || session == null ||
+                session.getCurrentStep() != OnboardingStep.ASK_MAS_FOTOS) return;
 
             int totalFotos = p.getPhotoUrls().size();
 
@@ -376,7 +432,7 @@ public class OnboardingService {
                     totalFotos, totalFotos);
 
             sendText(whatsappId, mensaje);
-            askWithButtons(p, OnboardingStep.ASK_MAS_FOTOS, "¿Deseas cargar más imágenes?", M_22_OPTIONS);
+            askWithButtons(session, p, OnboardingStep.ASK_MAS_FOTOS, "¿Deseas cargar más imágenes?", M_22_OPTIONS);
 
             pendingResponses.remove(whatsappId);
         } catch (Exception e) {
@@ -387,15 +443,15 @@ public class OnboardingService {
 
     // ====================== TODOS LOS HANDLERS ======================
 
-    public void handleWelcomeMessage(Patient p) {
-        p.setCurrentStep(OnboardingStep.START);
-        save(p);
+    public void handleWelcomeMessage(BotSession session,Patient p) {
+        session.setCurrentStep(OnboardingStep.START);
+        saveSession(session);
         whatsAppClient.sendWelcomeImage(p.getWhatsappId(), M_WELCOME);
         sendText(p.getWhatsappId(), M_TERMINOS);
-        askWithButtons(p, OnboardingStep.START, M_ACCEPT_TERMINOS, M_TERMINOS_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.START, M_ACCEPT_TERMINOS, M_TERMINOS_OPTIONS);
     }
 
-    private void handleStart(Patient p, String text) {
+    private void handleStart(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_TERMINOS_OPTIONS);
         log.info("Opcion de aceptar terminos y condiciones: " + selected);
         if (selected == null) {
@@ -404,21 +460,23 @@ public class OnboardingService {
         }
         if ("No".equals(selected)) {
             sendText(p.getWhatsappId(), M_NO_ACCEPT_TERMINOS);
-            askWithButtons(p, OnboardingStep.START, M_ACCEPT_TERMINOS, M_TERMINOS_OPTIONS);
+            askWithButtons(session, p, OnboardingStep.START, M_ACCEPT_TERMINOS, M_TERMINOS_OPTIONS);
             return;
         }
-        askWithList(p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
+        askWithList(session, p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
     }
 
-    private void handlePadecimiento(Patient p, String text) {
+    private void handlePadecimiento(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_1_OPTIONS);
         if (selected == null) {
             invalidOption(p);
             return;
         }
         p.setPadecimiento(mapPadecimiento(selected));
-        p.setCurrentStep(OnboardingStep.CONFIRM_PADECIMIENTO);
         save(p);
+
+        session.setCurrentStep(OnboardingStep.CONFIRM_PADECIMIENTO);
+        saveSession(session);
         sendText(p.getWhatsappId(), M_42 + selected + "\n\n¿Es correcto?");
         sendButtons(p, "¿Confirmas el motivo de tu consulta?", List.of("👍Sí", "👎No"));
     }
@@ -440,38 +498,50 @@ public class OnboardingService {
         return "Otros";
     }
 
-    private void handleConfirmPadecimiento(Patient p, String text) {
-        String selected = getSelectedOption(text, M_10_OPTIONS);
-        if (!selected.equalsIgnoreCase("Sí")) {
-            askWithList(p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
+    private void handleConfirmPadecimiento(BotSession session,Patient p, String text) {
+        String selected = getSelectedOption(text, List.of("Sí", "No"));
+
+        if (selected == null) {
+            invalidOption(p);
             return;
         }
-        askWithText(p, OnboardingStep.ASK_EMAIL, M_2);
+
+        if (!selected.equalsIgnoreCase("Sí")) {
+            askWithList(session, p, OnboardingStep.ASK_PADECIMIENTO, M_1, "Ver opciones", M_1_OPTIONS, "motivo");
+            return;
+        }
+
+        askWithText(session, p, OnboardingStep.ASK_EMAIL, M_2);
 
     }
 
-    private void handleEmail(Patient p, String text) {
+    private void handleEmail(BotSession session,Patient p, String text) {
         if (!text.matches("^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$")) {
             sendText(p.getWhatsappId(), "Por favor ingresa un correo válido (ejemplo: nombre@dominio.com), NOTA: sin espacios, ni acentos.");
             return;
         }
         p.setEmail(text.trim().toLowerCase());
-        p.setCurrentStep(OnboardingStep.CONFIRM_EMAIL);
+        session.setCurrentStep(OnboardingStep.CONFIRM_EMAIL);
         save(p);
         sendText(p.getWhatsappId(), M_3 + "\n\n" + text.trim().toLowerCase() + "\n\n¿Es correcto?");
         sendButtons(p, "¿Confirmas tu correo?", List.of("👍Sí", "👎No"));
     }
 
-    private void handleConfirmEmail(Patient p, String text) {
+    private void handleConfirmEmail(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_10_OPTIONS);
-        if (!selected.equalsIgnoreCase("Sí")) {
-            askWithText(p, OnboardingStep.ASK_EMAIL, M_2);
+        if (selected == null) {
+            invalidOption(p);
             return;
         }
-        askWithButtons(p, OnboardingStep.ASK_MAYORIA_EDAD, M_4, M_4_OPTIONS);
+
+        if (!selected.equalsIgnoreCase("Sí")) {
+            askWithText(session, p, OnboardingStep.ASK_EMAIL, M_2);
+            return;
+        }
+        askWithButtons(session, p, OnboardingStep.ASK_MAYORIA_EDAD, M_4, M_4_OPTIONS);
     }
 
-    private void handleMayoriaEdad(Patient p, String text) {
+    private void handleMayoriaEdad(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_4_OPTIONS);
 
         log.info("Opción seleccionada en mayoría de edad: '{}' → mapeado a: '{}'", text, selected);
@@ -479,15 +549,15 @@ public class OnboardingService {
         // Si no se reconoce la opción
         if (selected == null) {
             sendText(p.getWhatsappId(), "Por favor elige una opción válida.");
-            askWithButtons(p, OnboardingStep.ASK_MAYORIA_EDAD, M_4, M_4_OPTIONS);
+            askWithButtons(session, p, OnboardingStep.ASK_MAYORIA_EDAD, M_4, M_4_OPTIONS);
             return;
         }
 
         // Si es menor de edad
         if (selected.equals("Menor de edad")) {
             sendText(p.getWhatsappId(), "Lo sentimos, debes ser mayor de 18 años o estar autorizado para continuar.\nConsulta terminada.");
-            p.setCurrentStep(OnboardingStep.WELCOME);
-            save(p);
+            session.setCurrentStep(OnboardingStep.WELCOME);
+            saveSession(session);
             return;
         }
 
@@ -499,25 +569,25 @@ public class OnboardingService {
                 ? "¿Cuál es el nombre completo de la persona para quien es la consulta?"
                 : M_5;
 
-        askWithText(p, OnboardingStep.ASK_NOMBRE, msg);
+        askWithText(session, p, OnboardingStep.ASK_NOMBRE, msg);
     }
 
-    private void handleNombre(Patient p, String text) {
+    private void handleNombre(BotSession session,Patient p, String text) {
         p.setNombreCompleto(text.trim());
-        askWithButtons(p, OnboardingStep.ASK_GENERO, M_6, M_6_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_GENERO, M_6, M_6_OPTIONS);
     }
 
-    private void handleGenero(Patient p, String text) {
+    private void handleGenero(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_6_OPTIONS);
         if (selected == null) {
             invalidOption(p);
             return;
         }
         p.setGenero(selected);
-        askWithText(p, OnboardingStep.ASK_FECHA_NAC, M_7);
+        askWithText(session, p, OnboardingStep.ASK_FECHA_NAC, M_7);
     }
 
-    private void handleFechaNac(Patient p, String text) {
+    private void handleFechaNac(BotSession session,Patient p, String text) {
         try {
             LocalDate fecha = dateParserUtil.parseFechaNacimiento(text.trim());
 
@@ -538,12 +608,12 @@ public class OnboardingService {
             // Validación: debe ser mayor de 18 años (tu bloque original, sin tocar)
             if (fecha.isAfter(LocalDate.now().minusYears(18)) && !p.getConsultaParaOtraPersona()) {
                 sendText(p.getWhatsappId(), "Lo sentimos, para continuar con la consulta dermatológica debes ser mayor de 18 años.");
-                p.setCurrentStep(OnboardingStep.WELCOME);
-                save(p);
+                session.setCurrentStep(OnboardingStep.WELCOME);
+                saveSession(session);
                 return;
             }
             p.setFechaNacimiento(fecha);
-            askWithText(p, OnboardingStep.ASK_PESO, M_8);
+            askWithText(session, p, OnboardingStep.ASK_PESO, M_8);
 
         } catch (Exception e) {
             log.error("Error inesperado procesando fecha de nacimiento para paciente {} - texto recibido: '{}'",
@@ -559,7 +629,7 @@ public class OnboardingService {
         }
     }
 
-    private void handlePeso(Patient p, String text) {
+    private void handlePeso(BotSession session,Patient p, String text) {
         try {
             String cleaned = text.trim()
                     .toLowerCase()
@@ -582,7 +652,7 @@ public class OnboardingService {
 
             p.setPesoKg(peso);
             log.info("Peso registrado para {}: {} kg", p.getWhatsappId(), peso);
-            askWithText(p, OnboardingStep.ASK_ALTURA, M_9);
+            askWithText(session, p, OnboardingStep.ASK_ALTURA, M_9);
 
         } catch (Exception e) {
             log.info("Peso no válido para {}: '{}'", p.getWhatsappId(), text);
@@ -596,7 +666,7 @@ public class OnboardingService {
         }
     }
 
-    private void handleAltura(Patient p, String text) {
+    private void handleAltura(BotSession session,Patient p, String text) {
         try {
             double altura = Double.parseDouble(text.trim().replace(",", "."));
             if (altura > 2.5) {
@@ -604,13 +674,13 @@ public class OnboardingService {
                 return;
             }
             p.setAlturaM(altura);
-            askWithButtons(p, OnboardingStep.ASK_FUMA, M_10, M_10_OPTIONS);
+            askWithButtons(session, p, OnboardingStep.ASK_FUMA, M_10, M_10_OPTIONS);
         } catch (Exception e) {
             sendText(p.getWhatsappId(), "Ingresa un número válido (ej. 1.70)");
         }
     }
 
-    private void handleFuma(Patient p, String text) {
+    private void handleFuma(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_10_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -620,53 +690,53 @@ public class OnboardingService {
         save(p);
         String padecimiento = p.getPadecimiento();
         if (padecimiento != null && padecimiento.toLowerCase().contains("anti-edad".toLowerCase())) {
-            askWithList(p, OnboardingStep.ASK_MEJORA_PRINCIPAL, M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
+            askWithList(session, p, OnboardingStep.ASK_MEJORA_PRINCIPAL, M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
         } else {
-            askWithList(p, OnboardingStep.ASK_DESDE_CUANDO, M_11, "Elegir tiempo", M_11_OPTIONS, "desde_cuando");
+            askWithList(session, p, OnboardingStep.ASK_DESDE_CUANDO, M_11, "Elegir tiempo", M_11_OPTIONS, "desde_cuando");
         }
     }
 
-    private void handleDesdeCuando(Patient p, String text) {
+    private void handleDesdeCuando(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_11_OPTIONS);
         if (selected == null) {
             invalidOption(p);
             return;
         }
         p.setDesdeCuando(selected);
-        p.setCurrentStep(nextStepAfterDesdeCuando(p.getPadecimiento()));
+        session.setCurrentStep(nextStepAfterDesdeCuando(p.getPadecimiento()));
         save(p);
-        sendNextQuestionAfterDesdeCuando(p);
+        sendNextQuestionAfterDesdeCuando(session, p);
     }
 
-    private void sendNextQuestionAfterDesdeCuando(Patient p) {
-        switch (p.getCurrentStep()) {
+    private void sendNextQuestionAfterDesdeCuando(BotSession session,Patient p) {
+        switch (session.getCurrentStep()) {
             case ASK_GRAVEDAD -> {
                 var options = getGravedadOptions(p.getPadecimiento());
                 if (options.size() > 3) {
-                    askWithList(p, OnboardingStep.ASK_GRAVEDAD,
+                    askWithList(session, p, OnboardingStep.ASK_GRAVEDAD,
                             getGravedadMessage(p.getPadecimiento()),
                             "👉Seleccionar opción",
                             options,
                             "gravedad_" + p.getPadecimiento().toLowerCase().replace(" ", "_"));
                 } else {
-                    askWithButtons(p, OnboardingStep.ASK_GRAVEDAD,
+                    askWithButtons(session, p, OnboardingStep.ASK_GRAVEDAD,
                             getGravedadMessage(p.getPadecimiento()), options);
                 }
             }
             case ASK_MEJORA_PRINCIPAL -> {
                 // 4 opciones → también lista
-                askWithList(p, OnboardingStep.ASK_MEJORA_PRINCIPAL,
+                askWithList(session, p, OnboardingStep.ASK_MEJORA_PRINCIPAL,
                         M_26, "Elegir mejora", M_26_OPTIONS, "mejora_principal");
             }
             case ASK_AREA_CAIDA -> {
                 // Solo 3 → botones están bien
-                askWithButtons(p, OnboardingStep.ASK_AREA_CAIDA, M_34, M_34_OPTIONS);
+                askWithButtons(session, p, OnboardingStep.ASK_AREA_CAIDA, M_34, M_34_OPTIONS);
             }
-            default -> askWithButtons(p, OnboardingStep.ASK_TRATAMIENTO_ANTERIOR, M_13, M_13_OPTIONS);
+            default -> askWithButtons(session, p, OnboardingStep.ASK_TRATAMIENTO_ANTERIOR, M_13, M_13_OPTIONS);
         }
     }
 
-    private void handleGravedad(Patient p, String text) {
+    private void handleGravedad(BotSession session,Patient p, String text) {
         var options = getGravedadOptions(p.getPadecimiento());
         String selected = getSelectedOption(text, options);
         if (selected == null) {
@@ -679,10 +749,10 @@ public class OnboardingService {
             case "Manchas" -> p.setGravedadManchas(selected);
             case "Rosacea" -> p.setGravedadRosacea(selected);
         }
-        askWithButtons(p, OnboardingStep.ASK_TRATAMIENTO_ANTERIOR, M_13, M_13_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_TRATAMIENTO_ANTERIOR, M_13, M_13_OPTIONS);
     }
 
-    private void handleTratamientoAnterior(Patient p, String text) {
+    private void handleTratamientoAnterior(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_13_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -690,18 +760,18 @@ public class OnboardingService {
         }
         p.setTratamientoAnterior("Sí".equalsIgnoreCase(selected));
         if (p.getTratamientoAnterior()) {
-            askWithText(p, OnboardingStep.ASK_TRATAMIENTOS_USADOS, M_14);
+            askWithText(session, p, OnboardingStep.ASK_TRATAMIENTOS_USADOS, M_14);
         } else {
-            askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
+            askWithButtons(session, p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
         }
     }
 
-    private void handleTratamientosUsados(Patient p, String text) {
+    private void handleTratamientosUsados(BotSession session,Patient p, String text) {
         p.setTratamientosUsados(text.trim());
-        askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
     }
 
-    private void handleAlergias(Patient p, String text) {
+    private void handleAlergias(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_15_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -709,18 +779,18 @@ public class OnboardingService {
         }
         p.setAlergias("Sí".equalsIgnoreCase(selected));
         if (p.getAlergias()) {
-            askWithText(p, OnboardingStep.ASK_ALERGIAS_DETALLES, M_16);
+            askWithText(session, p, OnboardingStep.ASK_ALERGIAS_DETALLES, M_16);
         } else {
-            askWithButtons(p, OnboardingStep.ASK_MEDICAMENTOS, M_17, M_17_OPTIONS);
+            askWithButtons(session, p, OnboardingStep.ASK_MEDICAMENTOS, M_17, M_17_OPTIONS);
         }
     }
 
-    private void handleAlergiasDetalles(Patient p, String text) {
+    private void handleAlergiasDetalles(BotSession session,Patient p, String text) {
         p.setAlergiasDetalles(text.trim());
-        askWithButtons(p, OnboardingStep.ASK_MEDICAMENTOS, M_17, M_17_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_MEDICAMENTOS, M_17, M_17_OPTIONS);
     }
 
-    private void handleMedicamentos(Patient p, String text) {
+    private void handleMedicamentos(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_17_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -728,18 +798,18 @@ public class OnboardingService {
         }
         p.setMedicamentos("Sí".equalsIgnoreCase(selected));
         if (p.getMedicamentos()) {
-            askWithText(p, OnboardingStep.ASK_MEDICAMENTOS_DETALLES, M_18);
+            askWithText(session, p, OnboardingStep.ASK_MEDICAMENTOS_DETALLES, M_18);
         } else {
-            askWithButtons(p, OnboardingStep.ASK_ENFERMEDADES, M_29, M_29_OPTIONS);
+            askWithButtons(session, p, OnboardingStep.ASK_ENFERMEDADES, M_29, M_29_OPTIONS);
         }
     }
 
-    private void handleMedicamentosDetalles(Patient p, String text) {
+    private void handleMedicamentosDetalles(BotSession session,Patient p, String text) {
         p.setMedicamentosDetalles(text.trim());
-        askWithButtons(p, OnboardingStep.ASK_ENFERMEDADES, M_29, M_29_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_ENFERMEDADES, M_29, M_29_OPTIONS);
     }
 
-    private void handleEnfermedades(Patient p, String text) {
+    private void handleEnfermedades(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_29_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -747,20 +817,21 @@ public class OnboardingService {
         }
         p.setEnfermedades("Sí".equalsIgnoreCase(selected));
         if (p.getEnfermedades()) {
-            askWithText(p, OnboardingStep.ASK_ENFERMEDADES_DETALLES, M_43);
+            askWithText(session, p, OnboardingStep.ASK_ENFERMEDADES_DETALLES, M_43);
         } else {
-            goToNextAfterEnfermedades(p);
+            goToNextAfterEnfermedades(session, p);
         }
     }
 
-    private void handleEnfermedadesDetalles(Patient p, String text) {
+    private void handleEnfermedadesDetalles(BotSession session,Patient p, String text) {
         p.setEnfermedadesDetalles(text.trim());
-        goToNextAfterEnfermedades(p);
+        goToNextAfterEnfermedades(session, p);
     }
 
-    private void goToNextAfterEnfermedades(Patient p) {
+    private void goToNextAfterEnfermedades(BotSession session,Patient p) {
         if ("Femenino".equals(p.getGenero())) {
             askWithList(
+                    session,
                     p,
                     OnboardingStep.ASK_STATUS_EMBARAZO,
                     M_33,
@@ -769,13 +840,13 @@ public class OnboardingService {
                     "status_embarazo"   // ← clave única para el mapeo
             );
         } else {
-            goToNotasAdicionales(p);
+            goToNotasAdicionales(session, p);
         }
     }
 
     // ==================== RAMAS ESPECÍFICAS ====================
 
-    private void handleMejoraPrincipal(Patient p, String text) {
+    private void handleMejoraPrincipal(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_26_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -783,6 +854,7 @@ public class OnboardingService {
         }
         p.setMejoraPrincipal(selected);
         askWithList(
+                session,
                 p,
                 OnboardingStep.ASK_TIPO_PIEL,
                 M_27,
@@ -792,7 +864,7 @@ public class OnboardingService {
         );
     }
 
-    private void handleTipoPiel(Patient p, String text) {
+    private void handleTipoPiel(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_27_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -800,6 +872,7 @@ public class OnboardingService {
         }
         p.setTipoPiel(selected);
         askWithList(
+                session,
                 p,
                 OnboardingStep.ASK_SENSIBILIDAD_PIEL,
                 M_28,
@@ -810,7 +883,7 @@ public class OnboardingService {
 
     }
 
-    private void handleSensibilidadPiel(Patient p, String text) {
+    private void handleSensibilidadPiel(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_28_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -818,6 +891,7 @@ public class OnboardingService {
         }
         p.setSensibilidadPiel(selected);
         askWithList(
+                session,
                 p,
                 OnboardingStep.ASK_EXPOSICION_SOL,
                 M_30,
@@ -827,7 +901,7 @@ public class OnboardingService {
         );
     }
 
-    private void handleExposicionSol(Patient p, String text) {
+    private void handleExposicionSol(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_30_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -835,6 +909,7 @@ public class OnboardingService {
         }
         p.setExposicionSol(selected);
         askWithList(
+                session,
                 p,
                 OnboardingStep.ASK_USA_PROTECTOR,
                 M_31,
@@ -844,17 +919,17 @@ public class OnboardingService {
         );
     }
 
-    private void handleUsaProtector(Patient p, String text) {
+    private void handleUsaProtector(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_31_OPTIONS);
         if (selected == null) {
             invalidOption(p);
             return;
         }
         p.setUsaProtector(selected);
-        askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
     }
 
-    private void handleAreaCaida(Patient p, String text) {
+    private void handleAreaCaida(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_34_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -862,6 +937,7 @@ public class OnboardingService {
         }
         p.setAreaCaida(selected);
         askWithList(
+                session,
                 p,
                 OnboardingStep.ASK_ANTECEDENTES_FAMILIA,
                 M_35,
@@ -871,55 +947,56 @@ public class OnboardingService {
         );
     }
 
-    private void handleAntecedentesFamilia(Patient p, String text) {
+    private void handleAntecedentesFamilia(BotSession session,Patient p, String text) {
         p.setAntecedentesFamiliares(text.trim());
-        askWithButtons(p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_ALERGIAS, M_15, M_15_OPTIONS);
     }
 
-    private void handleStatusEmbarazo(Patient p, String text) {
+    private void handleStatusEmbarazo(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_33_OPTIONS);
         if (selected == null) {
             invalidOption(p);
             return;
         }
         p.setStatusEmbarazo(selected);
-        goToNotasAdicionales(p);
+        goToNotasAdicionales(session, p);
     }
 
-    private void goToNotasAdicionales(Patient p) {
-        askWithButtons(p, OnboardingStep.ASK_NOTAS_ADICIONALES, getNotasMessage(p.getPadecimiento()), M_15_OPTIONS);
+    private void goToNotasAdicionales(BotSession session,Patient p) {
+        askWithButtons(session, p, OnboardingStep.ASK_NOTAS_ADICIONALES, getNotasMessage(p.getPadecimiento()), M_15_OPTIONS);
     }
 
-    private void handleNotasAdicionales(Patient p, String text) {
+    private void handleNotasAdicionales(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_15_OPTIONS);
         if (selected == null) {
             invalidOption(p);
             return;
         }
         if ("Sí".equalsIgnoreCase(selected)) {
-            askWithText(p, OnboardingStep.ASK_NOTAS_ADICIONALES_DETALLES, M_44);
+            askWithText(session, p, OnboardingStep.ASK_NOTAS_ADICIONALES_DETALLES, M_44);
             return;
         }
-        askWithButtons(p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
     }
 
-    private void handleNotasAdicionalesDetalles(Patient p, String text) {
+    private void handleNotasAdicionalesDetalles(BotSession session,Patient p, String text) {
         p.setNotasAdicionales(text.trim());
-        askWithButtons(p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_FOTOS, M_20, M_20_OPTIONS);
     }
 
-    private void handleFotos(Patient p, String text) {
+    private void handleFotos(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_20_OPTIONS);
         if (selected == null) {
             invalidOption(p);
             return;
         }
         if ("Cargar ahora".equalsIgnoreCase(selected)) {
-            p.setCurrentStep(OnboardingStep.ASK_MAS_FOTOS);
-            save(p);
+            session.setCurrentStep(OnboardingStep.ASK_MAS_FOTOS);
+            saveSession(session);
             sendText(p.getWhatsappId(), M_21);
         } else {
             askWithListSection(
+                    session,
                     p,
                     OnboardingStep.ASK_METODO_PAGO,
                     "¡Perfecto! Ya tenemos todo listo \n\nElige tu método de pago preferido:",
@@ -931,7 +1008,7 @@ public class OnboardingService {
         }
     }
 
-    private void handleMasFotos(Patient p, String text) {
+    private void handleMasFotos(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_22_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -941,6 +1018,7 @@ public class OnboardingService {
             sendText(p.getWhatsappId(), M_21);
         } else {
             askWithListSection(
+                    session,
                     p,
                     OnboardingStep.ASK_METODO_PAGO,
                     "¡Perfecto! Ya tenemos todo listo \n\nElige tu método de pago preferido:",
@@ -952,7 +1030,7 @@ public class OnboardingService {
         }
     }
 
-    private void handleExcesoFotos(Patient p, String text) {
+    private void handleExcesoFotos(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_EXCESO_FOTOS_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -961,6 +1039,7 @@ public class OnboardingService {
 
         if (selected.equalsIgnoreCase("Continuar")) {
             askWithListSection(
+                    session,
                     p,
                     OnboardingStep.ASK_METODO_PAGO,
                     "¡Excelente! Ya guardamos tus 5 fotos \n\nElige tu método de pago preferido:",
@@ -972,13 +1051,13 @@ public class OnboardingService {
         } else {
             p.getPhotoUrls().clear();
             p.setLastImageReceivedAt(null);
-            p.setCurrentStep(OnboardingStep.ASK_MAS_FOTOS);
-            save(p);
+            session.setCurrentStep(OnboardingStep.ASK_MAS_FOTOS);
+            saveSession(session);
             sendText(p.getWhatsappId(), "🔄 Se han eliminado todas las fotos.\n\n" + M_21);
         }
     }
 
-    private void handleMetodoPago(Patient p, String text) {
+    private void handleMetodoPago(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_METODO_PAGO_OPTIONS);
         log.info("Seleccion de metodo de pago: "+selected);
         if (selected == null) {
@@ -995,10 +1074,10 @@ public class OnboardingService {
         save(p);
 
         // AVANZAMOS AL PASO DE CÓDIGO DE DESCUENTO
-        askWithButtons(p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
+        askWithButtons(session, p, OnboardingStep.ASK_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO, M_CODIGO_DESCUENTO_OPTIONS);
     }
 
-    private void handleCodigoDescuento(Patient p, String text) {
+    private void handleCodigoDescuento(BotSession session,Patient p, String text) {
         String selected = getSelectedOption(text, M_CODIGO_DESCUENTO_OPTIONS);
         if (selected == null) {
             invalidOption(p);
@@ -1007,14 +1086,14 @@ public class OnboardingService {
 
         if ("Sí".equalsIgnoreCase(selected)) {
             // Pide el código
-            askWithText(p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
+            askWithText(session, p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
         } else {
             // No tiene → directo al pago
-            procederAlPago(p);
+            procederAlPago(session, p);
         }
     }
 
-    private void handleIngresarCodigo(Patient p, String text) {
+    private void handleIngresarCodigo(BotSession session,Patient p, String text) {
         String codigo = text.trim().toUpperCase();
 
         // POR AHORA: solo guardamos (futuro: validar con backend)
@@ -1026,24 +1105,24 @@ public class OnboardingService {
                         "Lo aplicaremos en tu pago (próximamente). Procedemos al pago...");
 
         // Siempre avanza al pago, aunque no valide el código aún
-        procederAlPago(p);
+        procederAlPago(session, p);
     }
 
     // MÉTODO COMÚN PARA IR AL PAGO SEGÚN MÉTODO ELEGIDO
-    private void procederAlPago(Patient p) {
+    private void procederAlPago(BotSession session,Patient p) {
         if (p.getMetodoPagoElegido() == 1) {
-            goToStripePayment(p);
+            goToStripePayment(session,p);
         } else if (p.getMetodoPagoElegido() == 2) {
-            goToPaymentMercadoPago(p);
+            goToPaymentMercadoPago(session, p);
         } else {
             // Seguridad
             sendText(p.getWhatsappId(), "Hubo un problema con el método de pago. Escribe *HOLA* para reiniciar.");
-            p.setCurrentStep(OnboardingStep.WELCOME);
-            save(p);
+            session.setCurrentStep(OnboardingStep.WELCOME);
+            saveSession(session);
         }
     }
 
-    private void goToStripePayment(Patient p) {
+    private void goToStripePayment(BotSession session,Patient p) {
         String paymentUrl;
 
         // REUTILIZAR SI YA EXISTE
@@ -1060,8 +1139,8 @@ public class OnboardingService {
 
             if (paymentUrl == null || paymentUrl.isBlank()) {
                 sendText(p.getWhatsappId(), "⚠️ Problema al generar el pago con Stripe. Intenta más tarde o escribe *HOLA*.");
-                p.setCurrentStep(OnboardingStep.WELCOME);
-                save(p);
+                session.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
+                saveSession(session);
                 return;
             }
 
@@ -1070,8 +1149,8 @@ public class OnboardingService {
             log.info("Nueva URL de pago generada y guardada para {}: {}", p.getWhatsappId(), paymentUrl);
         }
 
-        p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
-        save(p);
+        session.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
+        saveSession(session);
 
         // Mensaje con botón grande
         whatsAppClient.sendCtaUrlButton(
@@ -1089,9 +1168,9 @@ public class OnboardingService {
                         "¡Gracias por confiar en Elara! 💙");
     }
 
-    private void goToPaymentMercadoPago(Patient p) {
-        p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
-        save(p);
+    private void goToPaymentMercadoPago(BotSession session, Patient p) {
+        session.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
+        saveSession(session);
 
         String paymentUrl = mercadoPagoService.crearPaymentLink(
                 "ID-CONSULTA-UNICO", //TODO: AQUI VA EL ID DE CONSULTA UNICO
@@ -1101,8 +1180,8 @@ public class OnboardingService {
 
         if (paymentUrl == null || paymentUrl.isBlank()) {
             sendText(p.getWhatsappId(), "⚠️ Ocurrió un problema al generar el enlace de pago. Por favor intenta más tarde o escribe *HOLA* para reiniciar.");
-            p.setCurrentStep(OnboardingStep.WELCOME);
-            save(p);
+            session.setCurrentStep(OnboardingStep.WELCOME);
+            saveSession(session);
             return;
         }
 
@@ -1125,55 +1204,56 @@ public class OnboardingService {
     }
 
 
-    private void handlePayment(Patient p, String text) {
+    private void handlePayment(BotSession session,Patient p, String text) {
         if (!text.equalsIgnoreCase("PAGADO")) {
             sendText(p.getWhatsappId(), M_25);
             return;
         }
         p.setPagoProcesado(true);
-        p.setCurrentStep(OnboardingStep.WELCOME);
+        session.setCurrentStep(OnboardingStep.WELCOME);
+        saveSession(session);
         save(p);
         sendText(p.getWhatsappId(), M_24 + "\n\nhttps://panel.tuclinica.com/patient/" + p.getWhatsappId() + "\n\n Si deseas realizar una consulta nueva, escribe: hola");
     }
 
     // ==================== DOCUMENTOS LEGALES Y PAGO ====================
 
-    private void advanceToLegalDocuments(Patient p) {
-        p.setCurrentStep(OnboardingStep.ASK_TERMINOS);
-        save(p);
+    private void advanceToLegalDocuments(BotSession session, Patient p) {
+        session.setCurrentStep(OnboardingStep.ASK_TERMINOS);
+        saveSession(session);
         sendDocument(p.getWhatsappId(), TERMINOS_URL, "Términos y Condiciones.pdf");
         sendText(p.getWhatsappId(), "¿Aceptas los Términos y Condiciones?\n\nResponde *Sí* o *No*");
     }
 
-    private void handleTerminos(Patient p, String text) {
+    private void handleTerminos(BotSession session,Patient p, String text) {
         if (!text.equalsIgnoreCase("Sí") && !text.equalsIgnoreCase("Si")) {
             sendText(p.getWhatsappId(), "Debes aceptar los Términos y Condiciones para continuar.");
             return;
         }
-        p.setCurrentStep(OnboardingStep.ASK_AVISO_PRIVACIDAD);
-        save(p);
+        session.setCurrentStep(OnboardingStep.ASK_AVISO_PRIVACIDAD);
+        saveSession(session);
         sendDocument(p.getWhatsappId(), AVISO_PRIVACIDAD_URL, "Aviso de Privacidad.pdf");
         sendText(p.getWhatsappId(), "¿Aceptas el Aviso de Privacidad?\n\nResponde *Sí* o *No*");
     }
 
-    private void handleAvisoPrivacidad(Patient p, String text) {
+    private void handleAvisoPrivacidad(BotSession session,Patient p, String text) {
         if (!text.equalsIgnoreCase("Sí") && !text.equalsIgnoreCase("Si")) {
             sendText(p.getWhatsappId(), "Debes aceptar el Aviso de Privacidad para continuar.");
             return;
         }
-        p.setCurrentStep(OnboardingStep.ASK_CONSENTIMIENTO);
-        save(p);
+        session.setCurrentStep(OnboardingStep.ASK_CONSENTIMIENTO);
+        saveSession(session);
         sendDocument(p.getWhatsappId(), CONSENTIMIENTO_URL, "Consentimiento Informado de Telemedicina.pdf");
         sendText(p.getWhatsappId(), "¿Aceptas el Consentimiento Informado de Telemedicina?\n\nResponde *Sí* o *No*");
     }
 
-    private void handleConsentimiento(Patient p, String text) {
+    private void handleConsentimiento(BotSession session,Patient p, String text) {
         if (!text.equalsIgnoreCase("Sí") && !text.equalsIgnoreCase("Si")) {
             sendText(p.getWhatsappId(), "Debes aceptar el Consentimiento para continuar.");
             return;
         }
-        p.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
-        save(p);
+        session.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
+        saveSession(session);
         String paymentLink = "https://pago.tuclinica.com/pay/" + p.getWhatsappId(); // aquí pones Stripe, Mercado Pago, etc.
         sendText(p.getWhatsappId(), M_23 + "\n\n" + paymentLink + "\n\nCuando hayas pagado escribe *PAGADO*");
     }
@@ -1293,13 +1373,12 @@ public class OnboardingService {
      * Crea o recupera el paciente por número de WhatsApp
      */
     private Patient getOrCreatePatient(String whatsappId) {
-        String normalized = whatsappId.replaceFirst("^521?", "521"); // asegura formato 521...
+        String normalized = whatsappId.replaceFirst("^521?", "521");
 
         return patientRepository.findByWhatsappId(normalized)
                 .orElseGet(() -> {
                     Patient nuevo = Patient.builder()
                             .whatsappId(normalized)
-                            .currentStep(OnboardingStep.WELCOME)
                             .photoUrls(new ArrayList<>())
                             .createdAt(LocalDateTime.now())
                             .build();
@@ -1307,15 +1386,24 @@ public class OnboardingService {
                 });
     }
 
-    private void askWithButtons(Patient p, OnboardingStep nextStep, String message, List<String> options) {
-        p.setCurrentStep(nextStep);
-        save(p);
+
+    private void askWithButtons(BotSession session, Patient p,
+                                OnboardingStep nextStep,
+                                String message,
+                                List<String> options) {
+
+        session.setCurrentStep(nextStep);
+        saveSession(session);
+
         sendButtons(p, adaptarMensaje(p, message), options);
     }
 
-    private void askWithText(Patient p, OnboardingStep nextStep, String message) {
-        p.setCurrentStep(nextStep);
-        save(p);
+    private void askWithText(BotSession session, Patient p,
+                             OnboardingStep nextStep, String message) {
+
+        session.setCurrentStep(nextStep);
+        saveSession(session);
+
         sendText(p.getWhatsappId(), adaptarMensaje(p, message));
     }
 
@@ -1337,48 +1425,64 @@ public class OnboardingService {
     }
 
     public void processListSelection(String from, String listId) {
+
+        String normalizedFrom = normalize(from);
+
         log.info("processListSelection → listId: '{}'", listId);
 
         if (listId == null || listId.isBlank()) {
-            sendText(from, "Error: opción inválida.");
+            sendText(normalizedFrom, "Error: opción inválida.");
             return;
         }
 
-        Patient p = patientRepository.findByWhatsappId(from)
-                .orElseThrow(() -> new RuntimeException("Paciente no encontrado: " + from));
+        BotSession session = botSessionRepository.findByWhatsappId(normalizedFrom)
+                .orElseThrow(() -> new RuntimeException("Sesión no encontrada para: " + normalizedFrom));
 
-        String context = p.getLastListContext();
+        Patient patient = patientRepository.findByWhatsappId(normalizedFrom)
+                .orElseThrow(() -> new RuntimeException("Paciente no encontrado: " + normalizedFrom));
 
-        if (context == null) {
-            log.error("lastListContext es NULL para {} – aunque la columna existe", from);
-            sendText(from, "Error interno. Escribe *HOLA* para reiniciar.");
+        String context = session.getLastListContext();
+
+        if (context == null || context.isBlank()) {
+            log.error("lastListContext es NULL para {}", normalizedFrom);
+            sendText(normalizedFrom, "Error interno. Escribe *HOLA* para reiniciar.");
             return;
         }
 
-        // ... resto del código igual (ya está perfecto)
         if (!listId.startsWith(context + "_")) {
             log.warn("listId '{}' no coincide con contexto '{}'", listId, context);
-            sendText(from, "Error de flujo. Escribe *HOLA* para reiniciar.");
+            sendText(normalizedFrom, "Error de flujo. Escribe *HOLA* para reiniciar.");
             return;
         }
 
-        int index = Integer.parseInt(listId.substring(listId.lastIndexOf("_") + 1)) - 1;
+        int index;
+        try {
+            index = Integer.parseInt(listId.substring(listId.lastIndexOf("_") + 1)) - 1;
+        } catch (NumberFormatException e) {
+            sendText(normalizedFrom, "Opción inválida.");
+            return;
+        }
+
         List<String> options = getOptionsForContext(context);
 
         if (index < 0 || index >= options.size()) {
-            sendText(from, "Opción inválida.");
+            sendText(normalizedFrom, "Opción inválida.");
             return;
         }
 
         String selected = options.get(index);
+
         log.info("✓ Selección correcta → contexto: {}, opción: {}", context, selected);
 
-        processText(from, selected);  // ← aquí sigue el flujo normal
+        processText(normalizedFrom, selected);
     }
+
+
 
     // ==== NUEVO: askWithList GENÉRICO ====
 
     private void askWithList(
+            BotSession session,
             Patient p,
             OnboardingStep nextStep,
             String bodyText,
@@ -1386,9 +1490,10 @@ public class OnboardingService {
             List<String> options,
             String contextKey
     ) {
-        p.setCurrentStep(nextStep);
-        p.setLastListContext(contextKey);
-        save(p);
+
+        session.setCurrentStep(nextStep);
+        session.setLastListContext(contextKey);
+        saveSession(session);
 
         List<Map<String, String>> rows = new ArrayList<>();
         for (int i = 0; i < options.size(); i++) {
@@ -1409,6 +1514,7 @@ public class OnboardingService {
     }
 
     private void askWithListSection(
+            BotSession session,
             Patient p,
             OnboardingStep nextStep,
             String bodyText,
@@ -1417,9 +1523,10 @@ public class OnboardingService {
             List<String> options,
             String contextKey
     ) {
-        p.setCurrentStep(nextStep);
-        p.setLastListContext(contextKey);
-        save(p);
+
+        session.setCurrentStep(nextStep);
+        session.setLastListContext(contextKey);
+        saveSession(session);
 
         List<Map<String, String>> rows = new ArrayList<>();
         for (int i = 0; i < options.size(); i++) {
@@ -1430,28 +1537,16 @@ public class OnboardingService {
             rows.add(row);
         }
 
-        for (String opt : options) {
-            if (opt.length() > 24) {
-                log.error("OPCIÓN DEMASIADO LARGA: {}", opt);
-                sendText(p.getWhatsappId(), "Error temporal. Escribe *HOLA*");
-                return;
-            }
-        }
-
         Map<String, Object> section = new HashMap<>();
         section.put("title", sectionTitle);
         section.put("rows", rows);
 
-        List<Map<String, Object>> sections = new ArrayList<>();
-        sections.add(section);
-
-        // ← LLAMADA AL MÉTODO CON NOMBRE NUEVO
         whatsAppClient.sendListMessageWithSections(
                 p.getWhatsappId(),
                 "Método de pago",
                 bodyText,
                 buttonText,
-                sections
+                List.of(section)
         );
     }
 
@@ -1553,5 +1648,72 @@ public class OnboardingService {
         );
 
         log.info("Mensaje de pago exitoso enviado a {}", whatsappId);
+    }
+
+    private Map<String, Object> getPayload(BotSession session) {
+        try {
+            if (session.getPayloadJson() == null) {
+                return new HashMap<>();
+            }
+            return objectMapper.readValue(session.getPayloadJson(), Map.class);
+        } catch (Exception e) {
+            return new HashMap<>();
+        }
+    }
+
+    private void updatePayload(BotSession session, String key, Object value) {
+        try {
+            Map<String, Object> payload = getPayload(session);
+            payload.put(key, value);
+            session.setPayloadJson(objectMapper.writeValueAsString(payload));
+            saveSession(session);;
+        } catch (Exception e) {
+            throw new RuntimeException("Error updating payload", e);
+        }
+    }
+
+    private BotSession getOrCreateSession(String whatsappId) {
+
+        final String normalizedWhatsappId = normalize(whatsappId);
+
+        return botSessionRepository.findByWhatsappId(normalizedWhatsappId)
+                .orElseGet(() -> {
+
+                    BotSession session = BotSession.builder()
+                            .whatsappId(normalizedWhatsappId)
+                            .currentStep(OnboardingStep.WELCOME)
+                            .payloadJson("{}")
+                            .pendingInactivityResponse(false)
+                            .createdAt(LocalDateTime.now())
+                            .build();
+
+                    return botSessionRepository.save(session);
+                });
+    }
+
+
+    private void saveSession(BotSession session) {
+        session.setUpdatedAt(LocalDateTime.now());
+        botSessionRepository.save(session);;
+    }
+
+    private String normalize(String phone) {
+
+        if (phone == null || phone.isBlank()) {
+            return phone;
+        }
+
+        // Si ya viene con 521 no tocar
+        if (phone.startsWith("521")) {
+            return phone;
+        }
+
+        // Si viene con 52 pero no 521
+        if (phone.startsWith("52")) {
+            return "521" + phone.substring(2);
+        }
+
+        // Si viene sin prefijo internacional
+        return "521" + phone.replaceFirst("^0+", "");
     }
 }
