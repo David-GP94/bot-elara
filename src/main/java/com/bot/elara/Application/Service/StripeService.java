@@ -1,5 +1,6 @@
 package com.bot.elara.Application.Service;
 
+import com.bot.elara.Infrastructure.DTO.Stripe.StripeCheckoutResult;
 import com.stripe.Stripe;
 import com.stripe.exception.StripeException;
 import com.stripe.model.checkout.Session;
@@ -30,8 +31,13 @@ public class StripeService {
         log.info("Stripe API Key configurada correctamente (longitud: {})", stripeApiKey.length());
     }
 
-    public String crearPaymentLink(String consultaId, String whatsappId, String email) {
+    public StripeCheckoutResult crearPaymentLink(
+            String consultaPublicId,
+            String whatsappId,
+            String email
+    ) {
         try {
+
             SessionCreateParams params = SessionCreateParams.builder()
                     .setMode(SessionCreateParams.Mode.PAYMENT)
                     .setCustomerEmail(email)
@@ -42,7 +48,11 @@ public class StripeService {
                     )
                     .setSuccessUrl(baseUrl + "/pago-exito-whatsapp")
                     .setCancelUrl(baseUrl + "/pago-cancelado-whatsapp")
-                    .setExpiresAt(java.time.Instant.now().plus(java.time.Duration.ofHours(2)).getEpochSecond())
+                    .setExpiresAt(
+                            java.time.Instant.now()
+                                    .plus(java.time.Duration.ofHours(2))
+                                    .getEpochSecond()
+                    )
 
                     .addLineItem(
                             SessionCreateParams.LineItem.builder()
@@ -61,14 +71,23 @@ public class StripeService {
                                     )
                                     .build()
                     )
+
+                    // 🔥 METADATA IMPORTANTE
                     .putMetadata("channel", "whatsapp_bot")
-                    .putMetadata("consulta_id", consultaId)
+                    .putMetadata("consulta_public_id", consultaPublicId)
                     .putMetadata("whatsapp_id", whatsappId)
+
                     .build();
 
             Session session = Session.create(params);
+
             log.info("Checkout Session creada para {} → {}", whatsappId, session.getUrl());
-            return session.getUrl();
+
+            return StripeCheckoutResult.builder()
+                    .checkoutUrl(session.getUrl())
+                    .sessionId(session.getId())
+                    .paymentIntentId(session.getPaymentIntent())
+                    .build();
 
         } catch (StripeException e) {
             log.error("Error creando Checkout Session para {}", whatsappId, e);

@@ -25,6 +25,10 @@ logging:
     com.bot.elara: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql: TRACE
+aws:
+  region: ${AWS_REGION:us-east-1}
+  s3:
+    bucket: mielara-storage-test
 
 # ===========================================================================
 # CONFIGURACIÓN COMÚN
@@ -70,6 +74,13 @@ stripe:
 app:
   base-url: http://localhost:8080  # Para success/cancel locales
 
+django:
+  api:
+    url: ${DJANGO_API_URL}
+    key: ${DJANGO_API_KEY}
+bot:
+  internal:
+    secret: ${BOT_INTERNAL_SECRET}
 ---
 # PERFIL: PRODUCTION
 spring:
@@ -90,5 +101,13 @@ respondio:
 stripe:
   webhook-secret: ${STRIPE_WEBHOOK_SECRET}  # ← Inyecta desde variable de entorno en producción
   # price-amount hereda el valor común de arriba
+django:
+  api:
+    url: ${DJANGO_API_URL}
+    key: ${DJANGO_API_KEY}
+
+bot:
+  internal:
+    secret: ${BOT_INTERNAL_SECRET}
 app:
   base-url: https://tu-dominio-real.com  # ← Cambia por tu dominio público (HTTPS obligatorio en prod)
