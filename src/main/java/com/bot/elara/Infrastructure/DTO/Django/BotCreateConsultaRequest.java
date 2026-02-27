@@ -2,6 +2,8 @@ package com.bot.elara.Infrastructure.DTO.Django;
 
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class BotCreateConsultaRequest {
 
@@ -30,5 +32,7 @@ public class BotCreateConsultaRequest {
 
     private String metodo_pago;
     private String codigo_descuento;
+
+    private List<String> photo_keys;
 
 }

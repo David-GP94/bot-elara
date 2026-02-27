@@ -25,6 +25,10 @@ logging:
     com.bot.elara: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql: TRACE
+aws:
+  region: ${AWS_REGION:us-east-1}
+  s3:
+    bucket: mielara-storage-test
 
 # ===========================================================================
 # CONFIGURACIÓN COMÚN

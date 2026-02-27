@@ -4,6 +4,11 @@ import com.bot.elara.Domain.Model.BotSession;
 import com.bot.elara.Domain.Model.OnboardingStep;
 import com.bot.elara.Domain.Model.Patient;
 import com.bot.elara.Domain.Repository.PatientRepository;
+import com.bot.elara.Infrastructure.DTO.Django.AttachStripeSessionRequest;
+import com.bot.elara.Infrastructure.DTO.Django.BotCreateConsultaRequest;
+import com.bot.elara.Infrastructure.DTO.Django.BotCreateConsultaResponse;
+import com.bot.elara.Infrastructure.DTO.Django.BotUserResponse;
+import com.bot.elara.Infrastructure.DTO.Stripe.StripeCheckoutResult;
 import com.bot.elara.Infrastructure.External.Storage.S3Service;
 import com.bot.elara.Infrastructure.External.Whatsapp.Model.Image;
 import com.bot.elara.Infrastructure.External.Whatsapp.WhatsAppCloudApiClient;
@@ -58,6 +63,10 @@ public class OnboardingService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final BotSessionRepository botSessionRepository;
+
+    private final DjangoIntegrationService djangoIntegrationService;
+    private final S3StorageService s3StorageService;
+    private final WhatsAppMediaService whatsAppMediaService;
 
 
 
@@ -357,9 +366,15 @@ public class OnboardingService {
 
         // 🔹 6. Guardar imagen
         LocalDateTime now = LocalDateTime.now();
-        String mockUrl = "https://mock-fotos.com/foto_" + image.getId() + ".jpg";
+        byte[] imageBytes = whatsAppMediaService.downloadMedia(image.getId());
 
-        p.getPhotoUrls().add(mockUrl);
+        String s3Url = s3StorageService.upload(
+                imageBytes,
+                image.getMimeType(),
+                from
+        );
+
+        p.getPhotoUrls().add(s3Url);
         p.setLastImageReceivedAt(now);
 
         patientRepository.save(p);
@@ -367,7 +382,7 @@ public class OnboardingService {
 
         int newCount = p.getPhotoUrls().size();
 
-        log.info("Imagen {} de 5 recibida para {} → {}", newCount, from, mockUrl);
+        log.info("Imagen {} de 5 recibida para {} → {}", newCount, from, s3Url);
 
         // 🔹 7. Si alcanzó límite → avanzar flujo
         if (newCount >= 5) {
@@ -1109,63 +1124,57 @@ public class OnboardingService {
     }
 
     // MÉTODO COMÚN PARA IR AL PAGO SEGÚN MÉTODO ELEGIDO
-    private void procederAlPago(BotSession session,Patient p) {
+    private void procederAlPago(BotSession session, Patient p) {
+
+        // 🔥 1️⃣ Crear consulta si aún no existe
+        if (session.getConsultaPublicId() == null) {
+            crearConsultaEnDjango(session, p);
+        }
+
+        // 🔥 2️⃣ Luego generar el pago
         if (p.getMetodoPagoElegido() == 1) {
-            goToStripePayment(session,p);
+            goToStripePayment(session, p);
         } else if (p.getMetodoPagoElegido() == 2) {
             goToPaymentMercadoPago(session, p);
         } else {
-            // Seguridad
-            sendText(p.getWhatsappId(), "Hubo un problema con el método de pago. Escribe *HOLA* para reiniciar.");
+            sendText(p.getWhatsappId(),
+                    "Hubo un problema con el método de pago. Escribe *HOLA* para reiniciar.");
             session.setCurrentStep(OnboardingStep.WELCOME);
             saveSession(session);
         }
     }
 
-    private void goToStripePayment(BotSession session,Patient p) {
-        String paymentUrl;
+    private void goToStripePayment(BotSession session, Patient p) {
 
-        // REUTILIZAR SI YA EXISTE
-        if (p.getPaymentUrl() != null && !p.getPaymentUrl().isBlank()) {
-            paymentUrl = p.getPaymentUrl();
-            log.info("Reutilizando URL de pago existente para {}: {}", p.getWhatsappId(), paymentUrl);
-        } else {
-            // CREAR NUEVA Y GUARDARLA
-            paymentUrl = stripeService.crearPaymentLink(
-                    "CONSULTA-" + p.getWhatsappId(),
-                    p.getWhatsappId(),
-                    p.getEmail()
-            );
+        StripeCheckoutResult result = stripeService.crearPaymentLink(
+                session.getConsultaPublicId(),
+                p.getWhatsappId(),
+                p.getEmail()
+        );
 
-            if (paymentUrl == null || paymentUrl.isBlank()) {
-                sendText(p.getWhatsappId(), "⚠️ Problema al generar el pago con Stripe. Intenta más tarde o escribe *HOLA*.");
-                session.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
-                saveSession(session);
-                return;
-            }
-
-            p.setPaymentUrl(paymentUrl);
-            save(p);
-            log.info("Nueva URL de pago generada y guardada para {}: {}", p.getWhatsappId(), paymentUrl);
+        if (result == null) {
+            sendText(p.getWhatsappId(),
+                    "⚠️ Hubo un problema generando el pago. Intenta más tarde.");
+            return;
         }
+
+        // 🔥 Guardar sesión Stripe en Django
+        AttachStripeSessionRequest attachRequest = new AttachStripeSessionRequest();
+        attachRequest.setConsulta_id(session.getConsultaId());
+        attachRequest.setStripe_session_id(result.getSessionId());
+        attachRequest.setPayment_intent_id(result.getPaymentIntentId());
+
+        djangoIntegrationService.attachStripeSession(attachRequest);
 
         session.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
         saveSession(session);
 
-        // Mensaje con botón grande
         whatsAppClient.sendCtaUrlButton(
                 p.getWhatsappId(),
-                "💳 Pago con tarjeta (Stripe)\n\n" +
-                        "Costo: $999 MXN\n" +
-                        "Seguro y rápido\n\n" +
-                        "Da clic para pagar:",
-                "Pagar con Tarjeta 💳",
-                paymentUrl
+                "💳 Pago seguro con tarjeta\n\nDa clic para completar tu pago:",
+                "Pagar ahora",
+                result.getCheckoutUrl()
         );
-
-        sendText(p.getWhatsappId(),
-                "Cuando completes el pago, escribe *PAGADO* para confirmar.\n\n" +
-                        "¡Gracias por confiar en Elara! 💙");
     }
 
     private void goToPaymentMercadoPago(BotSession session, Patient p) {
@@ -1716,4 +1725,80 @@ public class OnboardingService {
         // Si viene sin prefijo internacional
         return "521" + phone.replaceFirst("^0+", "");
     }
+
+    private void crearConsultaEnDjango(BotSession session, Patient p) {
+
+        // 1️⃣ Crear o recuperar usuario en Django
+        BotUserResponse userResponse =
+                djangoIntegrationService.crearUsuario(
+                        p.getEmail(),
+                        p.getNombreCompleto()
+                );
+
+        if (userResponse == null || !Boolean.TRUE.equals(userResponse.getSuccess())) {
+            throw new RuntimeException("Error creando usuario en Django");
+        }
+
+        // 2️⃣ Construir request de consulta
+        BotCreateConsultaRequest request = new BotCreateConsultaRequest();
+
+        request.setUser_id(userResponse.getUser_id());
+        request.setMotivo_consulta(
+                MOTIVO_MAP.getOrDefault(p.getPadecimiento(), "otros")
+        );
+        request.setMetodo_pago(
+                p.getMetodoPagoElegido() == 1 ? "card" : "oxxo"
+        );
+        request.setPara_quien(
+                Boolean.TRUE.equals(p.getConsultaParaOtraPersona()) ? "otra_persona" : "para_mi"
+        );
+
+        request.setNombre_paciente(p.getNombreCompleto());
+        request.setGenero_nacimiento(p.getGenero());
+        if (p.getFechaNacimiento() != null) {
+            request.setFecha_nacimiento(
+                    p.getFechaNacimiento().toString()
+            );
+        }
+        request.setPeso(p.getPesoKg() != null ? p.getPesoKg().intValue() : null);
+        request.setAltura(p.getAlturaM());
+        request.setFuma(p.getFuma());
+
+        request.setTiene_alergias(p.getAlergias());
+        request.setAlergias_descripcion(p.getAlergiasDetalles());
+
+        request.setToma_medicamentos(p.getMedicamentos());
+        request.setMedicamentos_descripcion(p.getMedicamentosDetalles());
+
+        request.setInformacion_adicional(p.getNotasAdicionales());
+        request.setCodigo_descuento(p.getCodigoDescuento());
+        request.setPhoto_keys(p.getPhotoUrls());
+
+        // 3️⃣ Crear consulta
+        BotCreateConsultaResponse response =
+                djangoIntegrationService.crearConsulta(request);
+
+        if (response == null || !Boolean.TRUE.equals(response.getSuccess())) {
+            throw new RuntimeException("Error creando consulta en Django");
+        }
+
+        // 4️⃣ Guardar en sesión del bot
+        session.setConsultaId(response.getConsulta_id());
+        session.setConsultaPublicId(response.getPublic_id());
+        saveSession(session);
+
+        // Limpiar fotos del paciente para evitar reenvíos accidentales (si quieren agregarmás, lo harán explícitamente en el paso de fotos)
+        p.getPhotoUrls().clear();
+        patientRepository.save(p);
+    }
+
+    private static final Map<String, String> MOTIVO_MAP = Map.of(
+            "Acné", "acne",
+            "Caída de pelo", "cabello",
+            "Anti-edad", "antiedad_skincare",
+            "Rosácea", "rosacea",
+            "Manchas", "manchas",
+            "Dermatitis", "dermatitis",
+            "Otros", "otros"
+    );
 }

@@ -28,4 +28,8 @@ public class DjangoIntegrationService {
         return djangoApiClient.crearConsulta(apiKey, request);
     }
 
+    public GenericSuccessResponse attachStripeSession(AttachStripeSessionRequest request) {
+        return djangoApiClient.attachStripeSession(apiKey, request);
+    }
+
 }

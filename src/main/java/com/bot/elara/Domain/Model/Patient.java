@@ -73,6 +73,7 @@ public class Patient {
     private Boolean pagoProcesado;
     private String pagoId;
     private Integer metodoPagoElegido;
+    @Column(columnDefinition = "TEXT")
     private String paymentUrl;
     private String codigoDescuento;
 

@@ -22,4 +22,10 @@ public interface DjangoApiClient {
             @RequestBody BotCreateConsultaRequest request
     );
 
+    @PostMapping("/api/bot/attach-stripe-session/")
+    GenericSuccessResponse attachStripeSession(
+            @RequestHeader("X-API-KEY") String apiKey,
+            @RequestBody AttachStripeSessionRequest request
+    );
+
 }
