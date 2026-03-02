@@ -30,6 +30,11 @@ public class PaymentService {
             return;
         }
 
+        // En caso de que el callback se haya recibido pero por alguna razón no se haya actualizado la sesión, evitamos sobreescribir la consultaId
+        if (session.getConsultaId() != null) {
+            return;
+        }
+
         // 3️⃣ Actualizar estado interno
         session.setConsultaId(consultaId);
         session.setPaymentConfirmed(true);
