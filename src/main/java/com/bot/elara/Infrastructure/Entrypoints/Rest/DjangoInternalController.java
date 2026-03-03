@@ -7,6 +7,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+
 @RestController
 @RequestMapping("/internal")
 @RequiredArgsConstructor
@@ -21,7 +24,10 @@ public class DjangoInternalController {
             @RequestBody BotPaymentConfirmedRequest request
     ) {
 
-        if (!secret.equals(botInternalProperties.getSecret())) {
+        if (!MessageDigest.isEqual(
+                secret.getBytes(StandardCharsets.UTF_8),
+                botInternalProperties.getSecret().getBytes(StandardCharsets.UTF_8)
+        )) {
             return ResponseEntity.status(401).build();
         }
 
