@@ -1,21 +1,21 @@
-package com.bot. elara.Application.Service;
+package com.bot.elara.Application.Service;
 
-import com.bot.elara. Infrastructure. DTO.MercadoPago.PreferenceRequest;
+import com.bot.elara.Infrastructure.DTO.MercadoPago.PaymentLinkResult;
+import com.bot.elara.Infrastructure.DTO.MercadoPago.PreferenceRequest;
 import com.bot.elara.Infrastructure.DTO.MercadoPago.PreferenceResponse;
-import com.bot. elara.Infrastructure.DTO. MercadoPago.PaymentResponse;
+import com.bot.elara.Infrastructure.DTO.MercadoPago.PaymentResponse;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org. springframework.beans.factory.annotation.Value;
-import org.springframework. http.*;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework. web.client.HttpClientErrorException;
-import org. springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
-import java.time.OffsetDateTime;
 import java.util.*;
 
 @Service
@@ -70,8 +70,11 @@ public class MercadoPagoService {
     /**
      * Crea un link de pago en MercadoPago usando Checkout Pro
      */
-    public String crearPaymentLink(String consultaId, String whatsappId, String email) {
-        // Validaciones
+    public PaymentLinkResult crearPaymentLink(String consultaId,
+                                              String whatsappId,
+                                              String email,
+                                              Double precioFinal) {
+
         if (consultaId == null || consultaId.isBlank()) {
             log.error("❌ consultaId no puede estar vacío");
             return null;
@@ -82,145 +85,157 @@ public class MercadoPagoService {
             return null;
         }
 
-        if (email == null || ! email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$")) {
+        if (precioFinal == null || precioFinal <= 0) {
+            log.error("❌ precioFinal inválido: {}", precioFinal);
+            return null;
+        }
+
+        if (email == null || !email.matches("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+$")) {
             log.warn("⚠️ Email inválido: {}, usando default", email);
             email = "noreply@elara.com";
         }
 
         try {
-            // Construir la preferencia de pago
+
             PreferenceRequest preference = new PreferenceRequest();
 
-            // Convertir amount de centavos a decimal
-            BigDecimal priceDecimal = BigDecimal.valueOf(amount)
-                    .divide(BigDecimal.valueOf(100));
+            // 🔹 Precio correcto en MXN (no centavos)
+            BigDecimal priceDecimal = BigDecimal.valueOf(precioFinal);
 
-            // Items del pago
+            // 🔹 Item
             List<PreferenceRequest.Item> items = new ArrayList<>();
-            PreferenceRequest.Item item = new PreferenceRequest.Item(
+            items.add(new PreferenceRequest.Item(
                     "Consulta Dermatológica Elara",
                     "Revisión personalizada + diagnóstico + tratamiento",
                     1,
                     currency,
                     priceDecimal
-            );
-            items.add(item);
+            ));
             preference.setItems(items);
 
-            // Datos del comprador
-            PreferenceRequest. Payer payer = new PreferenceRequest.Payer(
-                    email,
-                    whatsappId
-            );
-            preference.setPayer(payer);
+            // 🔹 MANEJO DE PAYER (Igualando la lógica ganadora de Django)
+            if (isTestMode()) {
+                // En Java lo dejamos en null para que tu DTO no envíe el campo "payer"
+                // y la preferencia sea totalmente anónima.
+                preference.setPayer(null);
+            } else {
+                // En Producción sí mandamos los datos reales del usuario
+                PreferenceRequest.Payer payer = new PreferenceRequest.Payer(
+                        email,
+                        whatsappId
+                );
+                preference.setPayer(payer);
+            }
 
-            // URLs de retorno
+            // 🔹 URLs
             PreferenceRequest.BackUrls backUrls = new PreferenceRequest.BackUrls(
-                    baseUrl + "/pago-exito-whatsapp",
-                    baseUrl + "/pago-cancelado-whatsapp",
-                    baseUrl + "/pago-pendiente-whatsapp"
+                    baseUrl + "/consulta/mercadopago/success/",
+                    baseUrl + "/consulta/mercadopago/failure/",
+                    baseUrl + "/consulta/mercadopago/pending/"
             );
+
             preference.setBackUrls(backUrls);
             preference.setAutoReturn("approved");
-
-            // Webhook
             preference.setNotificationUrl(notificationUrl);
 
-            // External reference mejorado
-            String externalReference = String.format("ELARA-%s-%s-%d",
-                    consultaId,
-                    whatsappId. replaceAll("[^0-9]", ""),
-                    System.currentTimeMillis()
-            );
-            preference.setExternalReference(externalReference);
+            // 🔹 External reference fuerte (clave para webhook)
+            String externalReference = consultaId;
 
-            // Statement descriptor
+            preference.setExternalReference(externalReference);
             preference.setStatementDescriptor("ELARA DERMATO");
 
-            // Metadata
+            // 🔹 Metadata
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("consulta_id", consultaId);
             metadata.put("whatsapp_id", whatsappId);
-            metadata.put("timestamp", System.currentTimeMillis());
+            metadata.put("precio_final", precioFinal);
             metadata.put("channel", "whatsapp_bot");
             preference.setMetadata(metadata);
 
-            // Configuración de métodos de pago
-            PreferenceRequest.PaymentMethods paymentMethods = new PreferenceRequest.PaymentMethods();
-            paymentMethods.setInstallments(1);  // Solo 1 pago sin cuotas
+            // 🔹 Métodos de pago y Binary Mode (Igual a Django)
+            PreferenceRequest.PaymentMethods paymentMethods =
+                    new PreferenceRequest.PaymentMethods();
+            paymentMethods.setInstallments(1); // Forzar 1 pago para evitar errores en Sandbox
             preference.setPaymentMethods(paymentMethods);
 
-            // Expiración (2 horas)
-            OffsetDateTime now = OffsetDateTime.now();
-            preference.setExpires(true);
-            preference.setExpirationDateFrom(now.toString());
-            preference.setExpirationDateTo(now.plusHours(2).toString());
+            // Nota: Asegúrate de tener el atributo 'binaryMode' y su setter en tu clase PreferenceRequest (DTO)
+            preference.setBinaryMode(true);
 
-            // Headers
+            // 🔹 Expiración: ELIMINADA POR COMPLETO EN ESTA VERSIÓN
+            // Al no enviar fechas de expiración, evitamos el error de link caducado
+            // causado por el desfase de zonas horarias entre tu servidor y Mercado Pago.
+
+            // 🔹 Headers
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             headers.setBearerAuth(accessToken);
 
-            HttpEntity<PreferenceRequest> request = new HttpEntity<>(preference, headers);
+            HttpEntity<PreferenceRequest> request =
+                    new HttpEntity<>(preference, headers);
 
-            // Llamada a la API
             String url = apiUrl + "/checkout/preferences";
-            log.info("📤 Creando preferencia de pago para {} → Consulta:  {}", whatsappId, consultaId);
 
-            ResponseEntity<PreferenceResponse> response = restTemplate.exchange(
-                    url,
-                    HttpMethod.POST,
-                    request,
-                    PreferenceResponse.class
-            );
+            log.info("📤 Creando preferencia MP → Consulta: {}, Usuario: {}, Monto: {} {}",
+                    consultaId, whatsappId, precioFinal, currency);
+
+            ResponseEntity<PreferenceResponse> response =
+                    restTemplate.exchange(
+                            url,
+                            HttpMethod.POST,
+                            request,
+                            PreferenceResponse.class
+                    );
 
             if (response.getStatusCode() == HttpStatus.CREATED ||
                     response.getStatusCode() == HttpStatus.OK) {
 
-                PreferenceResponse preferenceResponse = response.getBody();
+                PreferenceResponse body = response.getBody();
 
-                if (preferenceResponse == null) {
-                    log. error("❌ Respuesta vacía de MercadoPago");
+                if (body == null) {
+                    log.error("❌ Respuesta vacía de MercadoPago");
                     return null;
                 }
 
                 String paymentUrl = isTestMode()
-                        ? preferenceResponse.getSandboxInitPoint()
-                        : preferenceResponse.getInitPoint();
+                        ? body.getSandboxInitPoint()
+                        : body.getInitPoint();
 
                 if (paymentUrl == null || paymentUrl.isBlank()) {
                     log.error("❌ URL de pago no generada");
                     return null;
                 }
 
-                log.info("✅ Preferencia creada exitosamente");
-                log.info("   📋 Preference ID: {}", preferenceResponse. getId());
-                log.info("   🔗 Payment URL: {}", paymentUrl);
+                log.info("✅ Preferencia creada");
+                log.info("   📋 Preference ID: {}", body.getId());
                 log.info("   📝 External Ref: {}", externalReference);
+                log.info("   🔗 Payment URL: {}", paymentUrl);
 
-                return paymentUrl;
+                return new PaymentLinkResult(
+                        paymentUrl,
+                        externalReference,
+                        body.getId()
+                );
             }
 
-            log.error("❌ Error al crear preferencia:  Status {}", response.getStatusCode());
+            log.error("❌ Error creando preferencia MP. Status: {}", response.getStatusCode());
             return null;
 
         } catch (HttpClientErrorException e) {
-            log.error("❌ Error del cliente (4xx) para {}: {} - {}",
-                    whatsappId, e.getStatusCode(), e.getResponseBodyAsString());
+            log.error("❌ Error 4xx MP → {} - {}",
+                    e.getStatusCode(),
+                    e.getResponseBodyAsString());
             return null;
 
         } catch (HttpServerErrorException e) {
-            log.error("❌ Error del servidor MercadoPago (5xx) para {}: {}",
-                    whatsappId, e.getStatusCode());
+            log.error("❌ Error 5xx MP → {}", e.getStatusCode());
             return null;
 
         } catch (ResourceAccessException e) {
-            log.error("❌ Error de conexión con MercadoPago para {}: {}",
-                    whatsappId, e.getMessage());
+            log.error("❌ Error conexión MP → {}", e.getMessage());
             return null;
 
         } catch (Exception e) {
-            log.error("❌ Error inesperado creando preferencia para {}", whatsappId, e);
+            log.error("❌ Error inesperado creando preferencia MP", e);
             return null;
         }
     }
@@ -237,7 +252,7 @@ public class MercadoPagoService {
 
             HttpEntity<String> request = new HttpEntity<>(headers);
 
-            ResponseEntity<PaymentResponse> response = restTemplate. exchange(
+            ResponseEntity<PaymentResponse> response = restTemplate.exchange(
                     url,
                     HttpMethod.GET,
                     request,

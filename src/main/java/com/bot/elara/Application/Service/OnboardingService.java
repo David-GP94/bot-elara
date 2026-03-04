@@ -8,6 +8,7 @@ import com.bot.elara.Infrastructure.DTO.Django.AttachStripeSessionRequest;
 import com.bot.elara.Infrastructure.DTO.Django.BotCreateConsultaRequest;
 import com.bot.elara.Infrastructure.DTO.Django.BotCreateConsultaResponse;
 import com.bot.elara.Infrastructure.DTO.Django.BotUserResponse;
+import com.bot.elara.Infrastructure.DTO.MercadoPago.PaymentLinkResult;
 import com.bot.elara.Infrastructure.DTO.Stripe.StripeCheckoutResult;
 import com.bot.elara.Infrastructure.External.Storage.S3Service;
 import com.bot.elara.Infrastructure.External.Whatsapp.Model.Image;
@@ -141,10 +142,18 @@ public class OnboardingService {
         // ===== INTERCEPTOR GLOBAL HOLA =====
         if (text.equalsIgnoreCase("hola")) {
 
+            log.info("Reinicio completo de onboarding para {}", normalizedFrom);
+
+            // 🔥 Limpiar estado de consulta anterior
+            session.setConsultaId(null);
+            session.setConsultaPublicId(null);
+            session.setPaymentConfirmed(false);
             session.setCurrentStep(OnboardingStep.WELCOME);
             saveSession(session);
 
+            // Limpiar flags del paciente
             patient.setPendingInactivityResponse(false);
+            patient.setPagoProcesado(false);
             save(patient);
 
             handleWelcomeMessage(session, patient);
@@ -1126,12 +1135,14 @@ public class OnboardingService {
     // MÉTODO COMÚN PARA IR AL PAGO SEGÚN MÉTODO ELEGIDO
     private void procederAlPago(BotSession session, Patient p) {
 
-        // 🔥 1️⃣ Crear consulta si aún no existe
-        if (session.getConsultaPublicId() == null) {
-            crearConsultaEnDjango(session, p);
-        }
+        log.info("ANTES DE CREAR CONSULTA → consultaPublicId={}", session.getConsultaPublicId());
+        crearConsultaEnDjango(session, p);
 
-        // 🔥 2️⃣ Luego generar el pago
+
+        session.setPaymentConfirmed(false);
+        saveSession(session);
+
+        // 🔥 Luego generar el pago
         if (p.getMetodoPagoElegido() == 1) {
             goToStripePayment(session, p);
         } else if (p.getMetodoPagoElegido() == 2) {
@@ -1146,10 +1157,19 @@ public class OnboardingService {
 
     private void goToStripePayment(BotSession session, Patient p) {
 
+        Double precioFinal = session.getPrecioFinal();
+
+        if (precioFinal == null) {
+            sendText(p.getWhatsappId(),
+                    "⚠️ No se pudo obtener el precio de la consulta.");
+            return;
+        }
+
         StripeCheckoutResult result = stripeService.crearPaymentLink(
                 session.getConsultaPublicId(),
                 p.getWhatsappId(),
-                p.getEmail()
+                p.getEmail(),
+                precioFinal
         );
 
         if (result == null) {
@@ -1158,7 +1178,6 @@ public class OnboardingService {
             return;
         }
 
-        // 🔥 Guardar sesión Stripe en Django
         AttachStripeSessionRequest attachRequest = new AttachStripeSessionRequest();
         attachRequest.setConsulta_id(session.getConsultaId());
         attachRequest.setStripe_session_id(result.getSessionId());
@@ -1171,45 +1190,53 @@ public class OnboardingService {
 
         whatsAppClient.sendCtaUrlButton(
                 p.getWhatsappId(),
-                "💳 Pago seguro con tarjeta\n\nDa clic para completar tu pago:",
-                "Pagar ahora",
+                "💳 Pago seguro con tarjeta\n\n" +
+                        "Costo: $" + precioFinal + " MXN\n\n" +
+                        "Da clic para completar tu pago:",
+                "Pagar $" + precioFinal,
                 result.getCheckoutUrl()
         );
     }
 
     private void goToPaymentMercadoPago(BotSession session, Patient p) {
+
         session.setCurrentStep(OnboardingStep.PROCESS_PAYMENT);
         saveSession(session);
 
-        String paymentUrl = mercadoPagoService.crearPaymentLink(
-                "ID-CONSULTA-UNICO", //TODO: AQUI VA EL ID DE CONSULTA UNICO
-                p.getWhatsappId(),
-                p.getEmail()
-        );
+        Double precioFinal = session.getPrecioFinal();
 
-        if (paymentUrl == null || paymentUrl.isBlank()) {
-            sendText(p.getWhatsappId(), "⚠️ Ocurrió un problema al generar el enlace de pago. Por favor intenta más tarde o escribe *HOLA* para reiniciar.");
-            session.setCurrentStep(OnboardingStep.WELCOME);
-            saveSession(session);
+        if (precioFinal == null) {
+            sendText(p.getWhatsappId(),
+                    "⚠️ No se pudo obtener el precio de la consulta. Escribe *HOLA* para reiniciar.");
             return;
         }
 
-        // Mensaje con botón grande azul
+        PaymentLinkResult result = mercadoPagoService.crearPaymentLink(
+                session.getConsultaPublicId(),
+                p.getWhatsappId(),
+                p.getEmail(),
+                precioFinal
+        );
+
+        if (result == null || result.paymentUrl() == null || result.paymentUrl().isBlank()) {
+            sendText(p.getWhatsappId(),
+                    "⚠️ Ocurrió un problema al generar el enlace de pago.");
+            return;
+        }
+
+        // 🔥 Aquí guardas datos financieros importantes
+        session.setExternalPaymentReference(result.externalReference());
+        session.setPaymentProvider("MERCADOPAGO");
+        saveSession(session);
+
         whatsAppClient.sendCtaUrlButton(
                 p.getWhatsappId(),
                 "¡Todo listo! 🎉\n\n" +
-                        "Solo falta realizar el pago de tu consulta dermatológica.\n\n" +
-                        "💳 Costo: $999 MXN (impuestos incluidos)\n" +
-                        "🔒 Pago 100% seguro procesado por MercadoPago\n\n" +
+                        "💳 Costo: $" + precioFinal + " MXN\n\n" +
                         "Da clic en el botón para pagar:",
-                "Pagar $999 💳",
-                paymentUrl
+                "Pagar $" + precioFinal + " 💳",
+                result.paymentUrl()
         );
-
-        // Mensaje adicional
-        sendText(p.getWhatsappId(),
-                "Tan pronto completes el pago, recibirás automáticamente un mensaje de confirmación y el acceso a tu panel de paciente.\n\n" +
-                        "¡Gracias por confiar en Elara! 💙");
     }
 
 
@@ -1729,6 +1756,8 @@ public class OnboardingService {
     private void crearConsultaEnDjango(BotSession session, Patient p) {
 
         // 1️⃣ Crear o recuperar usuario en Django
+        log.info("CREANDO NUEVA CONSULTA EN DJANGO");
+
         BotUserResponse userResponse =
                 djangoIntegrationService.crearUsuario(
                         p.getEmail(),
@@ -1781,10 +1810,16 @@ public class OnboardingService {
         if (response == null || !Boolean.TRUE.equals(response.getSuccess())) {
             throw new RuntimeException("Error creando consulta en Django");
         }
+        log.info("Consulta creada con ID: {} y publicId: {}",
+                response.getConsulta_id(),
+                response.getPublic_id());
 
         // 4️⃣ Guardar en sesión del bot
         session.setConsultaId(response.getConsulta_id());
         session.setConsultaPublicId(response.getPublic_id());
+        session.setPrecioOriginal(response.getPrecio_original());
+        session.setDescuento(response.getDescuento());
+        session.setPrecioFinal(response.getPrecio_final());
         saveSession(session);
 
         // Limpiar fotos del paciente para evitar reenvíos accidentales (si quieren agregarmás, lo harán explícitamente en el paso de fotos)

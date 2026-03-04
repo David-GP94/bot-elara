@@ -41,6 +41,12 @@ public class BotSession {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    private Double precioOriginal;
+    private Double descuento;
+    private Double precioFinal;
+    private String externalPaymentReference;
+    private String paymentProvider;
+
     @PrePersist
     public void onCreate() {
         this.createdAt = LocalDateTime.now();

@@ -4,6 +4,7 @@ import com.bot.elara.Application.Service.PaymentService;
 import com.bot.elara.Config.BotInternalProperties;
 import com.bot.elara.Infrastructure.DTO.Django.BotPaymentConfirmedRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -13,6 +14,7 @@ import java.security.MessageDigest;
 @RestController
 @RequestMapping("/internal")
 @RequiredArgsConstructor
+@Slf4j
 public class DjangoInternalController {
 
     private final PaymentService paymentService;
@@ -23,7 +25,7 @@ public class DjangoInternalController {
             @RequestHeader("X-BOT-SECRET") String secret,
             @RequestBody BotPaymentConfirmedRequest request
     ) {
-
+        log.info("🔥 PAYMENT CONFIRMED ENDPOINT HIT 🔥 publicId={}", request.getPublic_id());
         if (!MessageDigest.isEqual(
                 secret.getBytes(StandardCharsets.UTF_8),
                 botInternalProperties.getSecret().getBytes(StandardCharsets.UTF_8)
