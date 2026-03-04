@@ -16,8 +16,6 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class StripeService {
 
-    @Value("${stripe.price-amount:99900}")
-    private long amount;
 
     @Value("${app.base-url:https://tu-dominio.com}")
     private String baseUrl;
@@ -34,9 +32,18 @@ public class StripeService {
     public StripeCheckoutResult crearPaymentLink(
             String consultaPublicId,
             String whatsappId,
-            String email
+            String email,
+            Double precioFinal
     ) {
+
+        if (precioFinal == null || precioFinal <= 0) {
+            log.error("❌ precioFinal inválido: {}", precioFinal);
+            return null;
+        }
+
         try {
+
+            long amountInCents = Math.round(precioFinal * 100);
 
             SessionCreateParams params = SessionCreateParams.builder()
                     .setMode(SessionCreateParams.Mode.PAYMENT)
@@ -60,7 +67,7 @@ public class StripeService {
                                     .setPriceData(
                                             SessionCreateParams.LineItem.PriceData.builder()
                                                     .setCurrency("mxn")
-                                                    .setUnitAmount(amount)
+                                                    .setUnitAmount(amountInCents)
                                                     .setProductData(
                                                             SessionCreateParams.LineItem.PriceData.ProductData.builder()
                                                                     .setName("Consulta Dermatológica Elara")
@@ -72,16 +79,18 @@ public class StripeService {
                                     .build()
                     )
 
-                    // 🔥 METADATA IMPORTANTE
+                    // 🔥 METADATA UNIFICADA
                     .putMetadata("channel", "whatsapp_bot")
                     .putMetadata("consulta_public_id", consultaPublicId)
                     .putMetadata("whatsapp_id", whatsappId)
+                    .putMetadata("precio_final", String.valueOf(precioFinal))
 
                     .build();
 
             Session session = Session.create(params);
 
-            log.info("Checkout Session creada para {} → {}", whatsappId, session.getUrl());
+            log.info("Stripe Session creada → Consulta: {}, Monto: {} MXN, URL: {}",
+                    consultaPublicId, precioFinal, session.getUrl());
 
             return StripeCheckoutResult.builder()
                     .checkoutUrl(session.getUrl())

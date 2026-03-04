@@ -72,7 +72,7 @@ stripe:
   # Si quieres usar el de Stripe CLI, cámbialo manualmente después de ejecutar stripe listen
 
 app:
-  base-url: http://localhost:8080  # Para success/cancel locales
+  base-url: https://araleim.com  # Para success/cancel test
 
 django:
   api:
@@ -110,4 +110,4 @@ bot:
   internal:
     secret: ${BOT_INTERNAL_SECRET}
 app:
-  base-url: https://tu-dominio-real.com  # ← Cambia por tu dominio público (HTTPS obligatorio en prod)
+  base-url: https://mielara.com

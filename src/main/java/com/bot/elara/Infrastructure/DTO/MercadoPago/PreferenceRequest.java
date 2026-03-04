@@ -1,5 +1,6 @@
 package com.bot.elara.Infrastructure. DTO.MercadoPago;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok. AllArgsConstructor;
 import lombok.Data;
@@ -12,6 +13,7 @@ import java.util.Map;
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public class PreferenceRequest {
 
     @JsonProperty("items")
@@ -49,6 +51,9 @@ public class PreferenceRequest {
 
     @JsonProperty("payment_methods")
     private PaymentMethods paymentMethods;
+
+    @JsonProperty("binary_mode")
+    private Boolean binaryMode;
 
     // ============================================
     // INNER CLASSES

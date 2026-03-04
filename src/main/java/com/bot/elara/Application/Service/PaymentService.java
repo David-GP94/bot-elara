@@ -5,11 +5,13 @@ import com.bot.elara.Domain.Model.OnboardingStep;
 import com.bot.elara.Infrastructure.External.Whatsapp.WhatsAppCloudApiClient;
 import com.bot.elara.Infrastructure.Persistence.Jpa.BotSessionRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class PaymentService {
 
     private final BotSessionRepository botSessionRepository;
@@ -17,42 +19,37 @@ public class PaymentService {
 
     @Transactional
     public void handlePaymentConfirmed(String publicId, Long consultaId) {
-
-        // 1️⃣ Buscar sesión existente por consultaPublicId
+        log.info("Processing payment for publicId={}", publicId);
         BotSession session = botSessionRepository
                 .findByConsultaPublicId(publicId)
-                .orElseThrow(() -> new RuntimeException(
-                        "No se encontró sesión para publicId: " + publicId
-                ));
+                .orElse(null);
 
-        // 2️⃣ Idempotencia (muy importante)
+        if (session == null) {
+            log.error("No se encontró sesión para publicId {}", publicId);
+            return;
+        }
+
+        // Idempotencia correcta
         if (Boolean.TRUE.equals(session.getPaymentConfirmed())) {
             return;
         }
 
-        // En caso de que el callback se haya recibido pero por alguna razón no se haya actualizado la sesión, evitamos sobreescribir la consultaId
-        if (session.getConsultaId() != null) {
-            return;
-        }
-
-        // 3️⃣ Actualizar estado interno
         session.setConsultaId(consultaId);
         session.setPaymentConfirmed(true);
         session.setCurrentStep(OnboardingStep.COMPLETED);
 
         botSessionRepository.save(session);
 
-        // 4️⃣ Enviar mensaje WhatsApp
         String phone = session.getWhatsappId();
 
         String message = """
-                ✅ Pago confirmado correctamente.
+            ✅ Pago confirmado correctamente.
 
-                Tu consulta fue enviada al médico.
-                En breve recibirás respuesta.
+            Tu consulta fue enviada al médico.
+            En breve recibirás respuesta.
 
-                Gracias por confiar en Elara 💙
-                """;
+            Gracias por confiar en Elara 💙
+            """;
 
         whatsAppClient.sendText(phone, message);
     }
