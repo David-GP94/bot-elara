@@ -32,4 +32,10 @@ public class DjangoIntegrationService {
         return djangoApiClient.attachStripeSession(apiKey, request);
     }
 
+    public ValidarDescuentoResponse validarDescuento(String codigo) {
+        ValidarDescuentoRequest request = new ValidarDescuentoRequest();
+        request.setCodigo(codigo);
+        return djangoApiClient.validarDescuento(apiKey, request);
+    }
+
 }

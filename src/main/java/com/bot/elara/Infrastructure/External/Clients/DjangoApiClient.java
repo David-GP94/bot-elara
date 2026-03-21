@@ -28,4 +28,10 @@ public interface DjangoApiClient {
             @RequestBody AttachStripeSessionRequest request
     );
 
+    @PostMapping("/api/bot/validar-descuento/")
+    ValidarDescuentoResponse validarDescuento(
+            @RequestHeader("X-API-KEY") String apiKey,
+            @RequestBody ValidarDescuentoRequest request
+    );
+
 }

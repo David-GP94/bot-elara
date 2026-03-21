@@ -16,6 +16,7 @@ import com.bot.elara.Infrastructure.External.Whatsapp.WhatsAppCloudApiClient;
 import com.bot.elara.Infrastructure.Persistence.Jpa.BotSessionRepository;
 import com.bot.elara.Util.DateParserUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import feign.FeignException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -204,6 +205,7 @@ public class OnboardingService {
             case ASK_METODO_PAGO -> handleMetodoPago(session, patient, text);
             case ASK_CODIGO_DESCUENTO -> handleCodigoDescuento(session, patient, text);
             case ASK_INGRESAR_CODIGO -> handleIngresarCodigo(session, patient, text);
+            case ASK_REINTENTAR_CODIGO -> handleReintentarCodigo(session, patient, text);
             case PROCESS_PAYMENT -> handlePayment(session, patient, text);
             case COMPLETED -> sendText(normalizedFrom, "Tu consulta ya está completada.");
             default -> sendText(normalizedFrom, "Escribe *HOLA* para reiniciar.");
@@ -282,27 +284,29 @@ public class OnboardingService {
                     goToPaymentMercadoPago(session, p);
                 } else {
                     // Seguridad: si por algún motivo no sabe el método, volvemos al menú
-                    askWithListSection(
+                    askWithListSectionRows(
                             session,
                             p,
                             OnboardingStep.ASK_METODO_PAGO,
-                            "⏰ ¡Hola de nuevo!\n\nEstábamos eligiendo el método de pago.\n\n¿En cuál prefieres pagar?",
-                            "Elegir método de pago",
-                            "Seleccionar",
-                            M_METODO_PAGO_OPTIONS,
+                            M_METODO_PAGO_HEADER,
+                            M_METODO_PAGO_REINTENTO,
+                            M_METODO_PAGO_SECTION_TITLE,
+                            M_METODO_PAGO_BUTTON,
+                            M_METODO_PAGO_ROWS,
                             "metodo_pago"
                     );
                 }
             }
             case ASK_METODO_PAGO -> {
-                askWithListSection(
+                askWithListSectionRows(
                         session,
                         p,
                         OnboardingStep.ASK_METODO_PAGO,
-                        "¡Perfecto! Ya tenemos tus fotos \n\nElige tu método de pago preferido:",
-                        "Elegir método de pago",
-                        "Seleccionar",
-                        M_METODO_PAGO_OPTIONS,
+                        M_METODO_PAGO_HEADER,
+                        M_METODO_PAGO,
+                        M_METODO_PAGO_SECTION_TITLE,
+                        M_METODO_PAGO_BUTTON,
+                        M_METODO_PAGO_ROWS,
                         "metodo_pago"
                 );
             }
@@ -311,6 +315,10 @@ public class OnboardingService {
 
             case ASK_INGRESAR_CODIGO ->
                     askWithText(session, p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
+            case ASK_REINTENTAR_CODIGO ->
+                    askWithButtons(session, p, OnboardingStep.ASK_REINTENTAR_CODIGO,
+                            String.format(M_CODIGO_INVALIDO, p.getCodigoDescuento() != null ? p.getCodigoDescuento() : "ingresado"),
+                            M_REINTENTAR_CODIGO_OPTIONS);
             default -> sendText(from, "Continuemos donde te quedaste. ¿En qué puedo ayudarte?");
         }
     }
@@ -1019,14 +1027,15 @@ public class OnboardingService {
             saveSession(session);
             sendText(p.getWhatsappId(), M_21);
         } else {
-            askWithListSection(
+            askWithListSectionRows(
                     session,
                     p,
                     OnboardingStep.ASK_METODO_PAGO,
-                    "¡Perfecto! Ya tenemos todo listo \n\nElige tu método de pago preferido:",
-                    "Elegir método de pago",
-                    "Seleccionar",
-                    M_METODO_PAGO_OPTIONS,
+                    M_METODO_PAGO_HEADER,
+                    M_METODO_PAGO_FOTOS_LISTO,
+                    M_METODO_PAGO_SECTION_TITLE,
+                    M_METODO_PAGO_BUTTON,
+                    M_METODO_PAGO_ROWS,
                     "metodo_pago"
             );
         }
@@ -1041,14 +1050,15 @@ public class OnboardingService {
         if ("Sí".equalsIgnoreCase(selected)) {
             sendText(p.getWhatsappId(), M_21);
         } else {
-            askWithListSection(
+            askWithListSectionRows(
                     session,
                     p,
                     OnboardingStep.ASK_METODO_PAGO,
-                    "¡Perfecto! Ya tenemos todo listo \n\nElige tu método de pago preferido:",
-                    "Elegir método de pago",
-                    "Seleccionar",
-                    M_METODO_PAGO_OPTIONS,
+                    M_METODO_PAGO_HEADER,
+                    M_METODO_PAGO_FOTOS_LISTO,
+                    M_METODO_PAGO_SECTION_TITLE,
+                    M_METODO_PAGO_BUTTON,
+                    M_METODO_PAGO_ROWS,
                     "metodo_pago"
             );
         }
@@ -1062,14 +1072,15 @@ public class OnboardingService {
         }
 
         if (selected.equalsIgnoreCase("Continuar")) {
-            askWithListSection(
+            askWithListSectionRows(
                     session,
                     p,
                     OnboardingStep.ASK_METODO_PAGO,
-                    "¡Excelente! Ya guardamos tus 5 fotos \n\nElige tu método de pago preferido:",
-                    "Elegir método de pago",
-                    "Seleccionar",
-                    M_METODO_PAGO_OPTIONS,
+                    M_METODO_PAGO_HEADER,
+                    M_METODO_PAGO_EXCESO_FOTOS,
+                    M_METODO_PAGO_SECTION_TITLE,
+                    M_METODO_PAGO_BUTTON,
+                    M_METODO_PAGO_ROWS,
                     "metodo_pago"
             );
         } else {
@@ -1117,19 +1128,61 @@ public class OnboardingService {
         }
     }
 
-    private void handleIngresarCodigo(BotSession session,Patient p, String text) {
+    private void handleIngresarCodigo(BotSession session, Patient p, String text) {
         String codigo = text.trim().toUpperCase();
-
-        // POR AHORA: solo guardamos (futuro: validar con backend)
         p.setCodigoDescuento(codigo);
         save(p);
 
-        sendText(p.getWhatsappId(),
-                "¡Código recibido: " + codigo + "!\n\n" +
-                        "Lo aplicaremos en tu pago (próximamente). Procedemos al pago...");
+        try {
+            var response = djangoIntegrationService.validarDescuento(codigo);
 
-        // Siempre avanza al pago, aunque no valide el código aún
-        procederAlPago(session, p);
+            if (Boolean.TRUE.equals(response.getCodigoValido())) {
+                // Código válido → guardar precios en sesión y avanzar al pago
+                session.setPrecioOriginal(response.getPrecioOriginal());
+                session.setDescuento(response.getDescuento());
+                session.setPrecioFinal(response.getPrecioFinal());
+                saveSession(session);
+
+                sendText(p.getWhatsappId(),
+                        String.format(M_CODIGO_VALIDO,
+                                response.getPrecioOriginal(),
+                                response.getDescuento(),
+                                response.getPrecioFinal()));
+
+                procederAlPago(session, p);
+            } else {
+                // Código inválido → preguntar si quiere reintentar
+                askWithButtons(session, p, OnboardingStep.ASK_REINTENTAR_CODIGO,
+                        String.format(M_CODIGO_INVALIDO, codigo),
+                        M_REINTENTAR_CODIGO_OPTIONS);
+            }
+        } catch (Exception e) {
+            log.error("Error validando código de descuento: {}", codigo, e);
+            sendText(p.getWhatsappId(), M_ERROR_VALIDAR_CODIGO);
+            p.setCodigoDescuento(null);
+            save(p);
+            procederAlPago(session, p);
+        }
+    }
+
+    private void handleReintentarCodigo(BotSession session, Patient p, String text) {
+        String selected = getSelectedOption(text, M_REINTENTAR_CODIGO_OPTIONS);
+        if (selected == null) {
+            invalidOption(p);
+            return;
+        }
+
+        if ("Sí".equalsIgnoreCase(selected)) {
+            // Volver a pedir el código
+            p.setCodigoDescuento(null);
+            save(p);
+            askWithText(session, p, OnboardingStep.ASK_INGRESAR_CODIGO, M_INGRESAR_CODIGO);
+        } else {
+            // No reintentar → avanzar al pago sin descuento
+            p.setCodigoDescuento(null);
+            save(p);
+            procederAlPago(session, p);
+        }
     }
 
     // MÉTODO COMÚN PARA IR AL PAGO SEGÚN MÉTODO ELEGIDO
@@ -1241,15 +1294,7 @@ public class OnboardingService {
 
 
     private void handlePayment(BotSession session,Patient p, String text) {
-        if (!text.equalsIgnoreCase("PAGADO")) {
             sendText(p.getWhatsappId(), M_25);
-            return;
-        }
-        p.setPagoProcesado(true);
-        session.setCurrentStep(OnboardingStep.WELCOME);
-        saveSession(session);
-        save(p);
-        sendText(p.getWhatsappId(), M_24 + "\n\nhttps://panel.tuclinica.com/patient/" + p.getWhatsappId() + "\n\n Si deseas realizar una consulta nueva, escribe: hola");
     }
 
     // ==================== DOCUMENTOS LEGALES Y PAGO ====================
@@ -1553,6 +1598,7 @@ public class OnboardingService {
             BotSession session,
             Patient p,
             OnboardingStep nextStep,
+            String headerText,
             String bodyText,
             String sectionTitle,
             String buttonText,
@@ -1579,7 +1625,38 @@ public class OnboardingService {
 
         whatsAppClient.sendListMessageWithSections(
                 p.getWhatsappId(),
-                "Método de pago",
+                headerText,
+                bodyText,
+                buttonText,
+                List.of(section)
+        );
+    }
+
+    /**
+     * Sobrecarga que acepta rows pre-construidos (con id, title y description).
+     */
+    private void askWithListSectionRows(
+            BotSession session,
+            Patient p,
+            OnboardingStep nextStep,
+            String headerText,
+            String bodyText,
+            String sectionTitle,
+            String buttonText,
+            List<Map<String, String>> rows,
+            String contextKey
+    ) {
+        session.setCurrentStep(nextStep);
+        session.setLastListContext(contextKey);
+        saveSession(session);
+
+        Map<String, Object> section = new HashMap<>();
+        section.put("title", sectionTitle);
+        section.put("rows", rows);
+
+        whatsAppClient.sendListMessageWithSections(
+                p.getWhatsappId(),
+                headerText,
                 bodyText,
                 buttonText,
                 List.of(section)
@@ -1754,77 +1831,120 @@ public class OnboardingService {
     }
 
     private void crearConsultaEnDjango(BotSession session, Patient p) {
+        try {
+            // 1️⃣ Crear o recuperar usuario en Django
+            log.info("CREANDO NUEVA CONSULTA EN DJANGO");
 
-        // 1️⃣ Crear o recuperar usuario en Django
-        log.info("CREANDO NUEVA CONSULTA EN DJANGO");
+            BotUserResponse userResponse = null;
 
-        BotUserResponse userResponse =
-                djangoIntegrationService.crearUsuario(
+            try {
+                userResponse = djangoIntegrationService.crearUsuario(
                         p.getEmail(),
                         p.getNombreCompleto()
                 );
+            } catch (FeignException.InternalServerError e) {
+                log.error("Error 500 al crear usuario en Django: {}", e.contentUTF8());
 
-        if (userResponse == null || !Boolean.TRUE.equals(userResponse.getSuccess())) {
-            throw new RuntimeException("Error creando usuario en Django");
-        }
+                // Si es error de duplicado, intentar continuar
+                if (e.contentUTF8() != null && e.contentUTF8().contains("Duplicate entry")) {
+                    log.warn("Usuario ya existe, intentando continuar...");
+                    // Aquí podrías tener un método alternativo para buscar el usuario
+                    // Por ahora, lanzamos excepción para que se maneje abajo
+                }
 
-        // 2️⃣ Construir request de consulta
-        BotCreateConsultaRequest request = new BotCreateConsultaRequest();
+                throw new RuntimeException("Error creando usuario", e);
 
-        request.setUser_id(userResponse.getUser_id());
-        request.setMotivo_consulta(
-                MOTIVO_MAP.getOrDefault(p.getPadecimiento(), "otros")
-        );
-        request.setMetodo_pago(
-                p.getMetodoPagoElegido() == 1 ? "card" : "oxxo"
-        );
-        request.setPara_quien(
-                Boolean.TRUE.equals(p.getConsultaParaOtraPersona()) ? "otra_persona" : "para_mi"
-        );
+            } catch (Exception e) {
+                log.error("Error inesperado al crear usuario: ", e);
+                throw new RuntimeException("Error creando usuario", e);
+            }
 
-        request.setNombre_paciente(p.getNombreCompleto());
-        request.setGenero_nacimiento(p.getGenero());
-        if (p.getFechaNacimiento() != null) {
-            request.setFecha_nacimiento(
-                    p.getFechaNacimiento().toString()
+            if (userResponse == null || !Boolean.TRUE.equals(userResponse.getSuccess())) {
+                log.error("Respuesta inválida al crear usuario: {}", userResponse);
+                throw new RuntimeException("Error creando usuario en Django");
+            }
+
+            log.info("Usuario creado/recuperado con ID: {}", userResponse.getUser_id());
+
+            // 2️⃣ Construir request de consulta
+            BotCreateConsultaRequest request = new BotCreateConsultaRequest();
+            request.setUser_id(userResponse.getUser_id());
+            request.setMotivo_consulta(
+                    MOTIVO_MAP.getOrDefault(p.getPadecimiento(), "otros")
             );
+            request.setMetodo_pago(
+                    p.getMetodoPagoElegido() == 1 ? "card" : "oxxo"
+            );
+            request.setPara_quien(
+                    Boolean.TRUE.equals(p.getConsultaParaOtraPersona()) ? "otra_persona" : "para_mi"
+            );
+
+            request.setNombre_paciente(p.getNombreCompleto());
+            request.setGenero_nacimiento(p.getGenero());
+            if (p.getFechaNacimiento() != null) {
+                request.setFecha_nacimiento(p.getFechaNacimiento().toString());
+            }
+            request.setPeso(p.getPesoKg() != null ? p.getPesoKg().intValue() : null);
+            request.setAltura(p.getAlturaM());
+            request.setFuma(p.getFuma());
+
+            request.setTiene_alergias(p.getAlergias());
+            request.setAlergias_descripcion(p.getAlergiasDetalles());
+
+            request.setToma_medicamentos(p.getMedicamentos());
+            request.setMedicamentos_descripcion(p.getMedicamentosDetalles());
+
+            request.setInformacion_adicional(p.getNotasAdicionales());
+            request.setCodigo_descuento(p.getCodigoDescuento());
+            request.setPhoto_keys(p.getPhotoUrls());
+
+            // 3️⃣ Crear consulta
+            BotCreateConsultaResponse response = null;
+
+            try {
+                response = djangoIntegrationService.crearConsulta(request);
+            } catch (FeignException e) {
+                log.error("Error al crear consulta en Django [{}]: {}",
+                        e.status(), e.contentUTF8());
+                throw new RuntimeException("Error creando consulta", e);
+            }
+
+            if (response == null || !Boolean.TRUE.equals(response.getSuccess())) {
+                log.error("Respuesta inválida al crear consulta: {}", response);
+                throw new RuntimeException("Error creando consulta en Django");
+            }
+
+            log.info("Consulta creada con ID: {} y publicId: {}",
+                    response.getConsulta_id(),
+                    response.getPublic_id());
+
+            // 4️⃣ Guardar en sesión del bot
+            session.setConsultaId(response.getConsulta_id());
+            session.setConsultaPublicId(response.getPublic_id());
+            session.setPrecioOriginal(response.getPrecio_original());
+            session.setDescuento(response.getDescuento());
+            session.setPrecioFinal(response.getPrecio_final());
+            saveSession(session);
+
+            // Limpiar fotos del paciente
+            p.getPhotoUrls().clear();
+            patientRepository.save(p);
+
+        } catch (Exception e) {
+            log.error("Error fatal creando consulta en Django para paciente {}: ",
+                    p.getEmail(), e);
+
+            // 🔴 ENVIAR MENSAJE DE ERROR AL USUARIO
+            String whatsappId = session.getWhatsappId(); // O como obtengas el ID
+            sendText(whatsappId, M_ERROR_CREAR_CONSULTA);
+
+            // Opcional: Resetear el estado de la sesión para que pueda reintentar
+            session.setCurrentStep(OnboardingStep.WELCOME); // O el estado apropiado
+            saveSession(session);
+
+            // Re-lanzar la excepción si quieres que se propague
+            throw new RuntimeException("Error fatal creando consulta", e);
         }
-        request.setPeso(p.getPesoKg() != null ? p.getPesoKg().intValue() : null);
-        request.setAltura(p.getAlturaM());
-        request.setFuma(p.getFuma());
-
-        request.setTiene_alergias(p.getAlergias());
-        request.setAlergias_descripcion(p.getAlergiasDetalles());
-
-        request.setToma_medicamentos(p.getMedicamentos());
-        request.setMedicamentos_descripcion(p.getMedicamentosDetalles());
-
-        request.setInformacion_adicional(p.getNotasAdicionales());
-        request.setCodigo_descuento(p.getCodigoDescuento());
-        request.setPhoto_keys(p.getPhotoUrls());
-
-        // 3️⃣ Crear consulta
-        BotCreateConsultaResponse response =
-                djangoIntegrationService.crearConsulta(request);
-
-        if (response == null || !Boolean.TRUE.equals(response.getSuccess())) {
-            throw new RuntimeException("Error creando consulta en Django");
-        }
-        log.info("Consulta creada con ID: {} y publicId: {}",
-                response.getConsulta_id(),
-                response.getPublic_id());
-
-        // 4️⃣ Guardar en sesión del bot
-        session.setConsultaId(response.getConsulta_id());
-        session.setConsultaPublicId(response.getPublic_id());
-        session.setPrecioOriginal(response.getPrecio_original());
-        session.setDescuento(response.getDescuento());
-        session.setPrecioFinal(response.getPrecio_final());
-        saveSession(session);
-
-        // Limpiar fotos del paciente para evitar reenvíos accidentales (si quieren agregarmás, lo harán explícitamente en el paso de fotos)
-        p.getPhotoUrls().clear();
-        patientRepository.save(p);
     }
 
     private static final Map<String, String> MOTIVO_MAP = Map.of(
