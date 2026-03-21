@@ -48,5 +48,6 @@ public enum OnboardingStep {
     ASK_METODO_PAGO,
     ASK_CODIGO_DESCUENTO,
     ASK_INGRESAR_CODIGO,
+    ASK_REINTENTAR_CODIGO,
     ERROR
 }

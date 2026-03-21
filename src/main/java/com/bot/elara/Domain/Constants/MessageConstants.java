@@ -2,6 +2,7 @@
 package com.bot.elara.Domain.Constants;
 
 import java.util.List;
+import java.util.Map;
 
 public class MessageConstants {
     // M_WELCOME - Mensaje de bienvenida
@@ -93,7 +94,10 @@ public class MessageConstants {
 
     public static final String M_23 = "💳¡Listo! Gracias por completar tu consulta. Aquí tienes el link para realizar tu pago:";
     public static final String M_24 = "🎉Tu pago fue procesado correctamente, tu dermatóloga revisará tu caso, entra a tu cuenta para darle seguimiento.";
-    public static final String M_25 = "Hubo un error en tu pago, por favor intenta nuevamente";
+    public static final String M_25 =
+            "Tu pago está siendo verificado. ⏳\n\n" +
+                    "Esto puede tardar unos momentos. " +
+                    "Te avisaremos automáticamente cuando el pago sea confirmado.";
 
     // Anti-edad
     public static final String M_26 = "¡Listo! Empecemos con tu historial. 🧴¿Qué *te gustaría mejorar* de tu piel principalmente?";
@@ -143,26 +147,77 @@ public class MessageConstants {
     );
 
     // Notas adicionales por padecimiento
-    public static final String M_19 = "Y por último, 💬¿Tienes algo más que compartirle a tu dermatólogo sobre tu acné?";
-    public static final String M_32 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu skincare?";
-    public static final String M_36 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu caída de pelo?";
+    public static final String M_19 = "Y por último, 💬¿Tienes algo más que compartirle a tu dermatólogo sobre tu acné?\n" +
+            "(Por ejemplo: cambios recientes de cremas, exposición al sol, días donde empeora el acné, etc).";
+    public static final String M_32 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu skincare?\n " +
+            "(Por ejemplo: cambios recientes de cremas, comes saludable, cuánta agua tomas, etc).";
+    public static final String M_36 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu caída de pelo?\n" +
+            "(Por ejemplo: ¿La caída empezó de repente o ha sido progresiva?, tienes episodios de estrés, notas más la caída cuando te bañas, etc).";
     public static final String M_38 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tus manchas?";
-    public static final String M_39 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo?";
+    public static final String M_39 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo?\n" +
+            "(Por ejemplo: el problema empeoró recientemente, te afecta otras áreas del cuerpo, etc).";
     public static final String M_41 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu rosácea?";
     public static final String M_42 = "✅ Has seleccionado: ";
     public static final String M_43 = "📝 Por favor escribe en una linea cuáles enfermedades tienes:";
     public static final String M_44 = "📝 Por favor escribe en una linea los detalles para tu dermatólogo:";
 
-    public static final String M_METODO_PAGO = "¡Perfecto! Ya tenemos tus fotos \n\n" +
+    public static final String M_METODO_PAGO = "¡Perfecto! Ya tenemos tus fotos 📸\n\n" +
             "Ahora elige tu método de pago preferido:";
 
+    public static final String M_METODO_PAGO_HEADER = "Método de pago";
+    public static final String M_METODO_PAGO_SECTION_TITLE = "Elige tu método";
+    public static final String M_METODO_PAGO_BUTTON = "Ver métodos de pago";
+
+    public static final String M_METODO_PAGO_REINTENTO = "⏰ ¡Hola de nuevo!\n\nEstábamos eligiendo el método de pago.\n\n¿En cuál prefieres pagar?";
+    public static final String M_METODO_PAGO_FOTOS_LISTO = "¡Perfecto! Ya tenemos todo listo 📸\n\nElige tu método de pago preferido:";
+    public static final String M_METODO_PAGO_EXCESO_FOTOS = "¡Excelente! Ya guardamos tus 5 fotos 📸\n\nElige tu método de pago preferido:";
+
     public static final List<String> M_METODO_PAGO_OPTIONS = List.of(
-            "💳Stripe",
-            "🛍️Mercado Pago"
+            "💳 Stripe",
+            "🛍️ Mercado Pago"
+    );
+
+    public static final List<Map<String, String>> M_METODO_PAGO_ROWS = List.of(
+            Map.of(
+                    "id", "metodo_pago_1",
+                    "title", "💳 Stripe",
+                    "description", "Tarjeta crédito/débito y pago en OXXO"
+            ),
+            Map.of(
+                    "id", "metodo_pago_2",
+                    "title", "🛍️ Mercado Pago",
+                    "description", "Tarjetas, transferencia, efectivo y más"
+            )
     );
     public static final String M_CODIGO_DESCUENTO = "¡Excelente elección! \n\n🏷️¿Tienes un código de descuento o promoción?";
 
     public static final List<String> M_CODIGO_DESCUENTO_OPTIONS = List.of("👎No", "👍Sí");
 
     public static final String M_INGRESAR_CODIGO = "📝Perfecto, por favor escribe tu código de descuento:";
+
+    public static final String M_CODIGO_VALIDO = "✅ ¡Código aplicado exitosamente!\n\n" +
+            "💰 Precio original: $%.2f MXN\n" +
+            "🏷️ Descuento: -$%.2f MXN\n" +
+            "💳 *Total a pagar: $%.2f MXN*\n\n" +
+            "Procedemos al pago...";
+
+    public static final String M_CODIGO_INVALIDO = "❌ El código *%s* no es válido o ya expiró.\n\n¿Deseas intentar con otro código?";
+
+    public static final List<String> M_REINTENTAR_CODIGO_OPTIONS = List.of("👍Sí", "👎No");
+
+    public static final String M_ERROR_VALIDAR_CODIGO = "⚠️ No pudimos validar tu código en este momento. Procedemos al pago sin descuento.";
+
+    public static final String M_ERROR_CREAR_USUARIO =
+            "⚠️ Hubo un problema al procesar tu información.\n\n" +
+                    "Por favor, intenta nuevamente en unos minutos.\n\n" +
+                    "Si el problema persiste, contáctanos al [email/teléfono].";
+
+    public static final String M_ERROR_CREAR_CONSULTA =
+            "⚠️ No pudimos crear tu consulta en este momento.\n\n" +
+                    "Por favor, intenta nuevamente más tarde.\n\n" +
+                    "Si el problema continúa, escríbenos a soporte@mielara.com";
+
+    public static final String M_ERROR_GENERICO =
+            "😔 Algo salió mal. Por favor, intenta de nuevo.\n\n" +
+                    "Si el error persiste, contáctanos para ayudarte.";
 }
