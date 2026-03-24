@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import static com.bot.elara.Domain.Constants.MessageConstants.*;
 
 @Service
 @RequiredArgsConstructor
@@ -42,16 +43,9 @@ public class PaymentService {
 
         String phone = session.getWhatsappId();
 
-        String message = """
-            ✅ Pago confirmado correctamente.
+        whatsAppClient.sendText(phone, M_PAGO_CONFIRMADO);
 
-            Tu consulta fue enviada al médico.
-            En breve recibirás respuesta.
-
-            Gracias por confiar en Elara 💙
-            """;
-
-        whatsAppClient.sendText(phone, message);
+        whatsAppClient.sendVideo(phone, M_CONOCE_TU_DERMATOLOGO);
     }
 }
 

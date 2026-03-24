@@ -14,6 +14,7 @@ public class WhatsAppConfig {
     private String webhookVerifyToken;
     private String baseUrl;
     private String logoPath;
+    private String videoPath;
 
     public String getMessagesUrl() {
         return baseUrl + "/" + phoneNumberId + "/messages";

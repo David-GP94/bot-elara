@@ -66,6 +66,7 @@ whatsapp:
   webhook-verify-token: mi_token_sandbox_2025
   base-url: https://graph.facebook.com/v20.0
   logo-path: classpath:static/logo-elara.jpg
+  video-path: classpath:static/conoce_tu_dermatologo.mp4
 
 stripe:
   webhook-secret: ${STRIPE_WEBHOOK_SECRET}  # ← Valor dummy solo para pruebas locales
@@ -93,6 +94,8 @@ whatsapp:
   access-token: ${WHATSAPP_ACCESS_TOKEN}
   webhook-verify-token: ${WHATSAPP_VERIFY_TOKEN}
   base-url: https://graph.facebook.com/v20.0
+  logo-path: classpath:static/logo-elara.jpg
+  video-path: classpath:static/conoce_tu_dermatologo.mp4
 
 respondio:
   api-url: https://api.respond.io/v1

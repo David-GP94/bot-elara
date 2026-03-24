@@ -153,10 +153,13 @@ public class MessageConstants {
             "(Por ejemplo: cambios recientes de cremas, comes saludable, cuánta agua tomas, etc).";
     public static final String M_36 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu caída de pelo?\n" +
             "(Por ejemplo: ¿La caída empezó de repente o ha sido progresiva?, tienes episodios de estrés, notas más la caída cuando te bañas, etc).";
-    public static final String M_38 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tus manchas?";
+    public static final String M_38 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tus manchas?\n" +
+            "(Por ejemplo, ¿Qué productos has usado? ¿Te cuidas del sol? ¿Te arde la cara con algún producto?)";
     public static final String M_39 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo?\n" +
             "(Por ejemplo: el problema empeoró recientemente, te afecta otras áreas del cuerpo, etc).";
-    public static final String M_41 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu rosácea?";
+    public static final String M_41 = "Y por último, ¿Tienes algo más que compartirle a tu dermatólogo sobre tu rosácea?\n" +
+            "(Por ejemplo, ¿Te arde mucha la cara o sientes mucha sensibilidad? \n" +
+            "¿Te pones muy rojo/a con algo en especial? ¿Hay algún producto que te arda o no toleres en cara?)";
     public static final String M_42 = "✅ Has seleccionado: ";
     public static final String M_43 = "📝 Por favor escribe en una linea cuáles enfermedades tienes:";
     public static final String M_44 = "📝 Por favor escribe en una linea los detalles para tu dermatólogo:";
@@ -220,4 +223,17 @@ public class MessageConstants {
     public static final String M_ERROR_GENERICO =
             "😔 Algo salió mal. Por favor, intenta de nuevo.\n\n" +
                     "Si el error persiste, contáctanos para ayudarte.";
+
+    public static final String M_PAGO_CONFIRMADO =
+            "✅ Pago confirmado correctamente.\n" +
+            "\n" +
+            "Tu consulta fue enviada al médico.\n" +
+            "En breve recibirás respuesta.\n" +
+            "\n" +
+            "Gracias por confiar en Elara 💙";
+
+    public static final String M_CONOCE_TU_DERMATOLOGO =
+            "🎥 Conoce a tu dermatóloga\n" +
+            "\n" +
+            "Queremos que te sientas en confianza. En este video, nuestra especialista te comparte su experiencia y trayectoria profesional.";
 }

@@ -113,7 +113,7 @@ public class MercadoPagoService {
             ));
             preference.setItems(items);
 
-            // 🔹 MANEJO DE PAYER (Igualando la lógica ganadora de Django)
+            //MANEJO DE PAYER
             if (isTestMode()) {
                 // En Java lo dejamos en null para que tu DTO no envíe el campo "payer"
                 // y la preferencia sea totalmente anónima.

@@ -29,6 +29,7 @@ public class WhatsAppCloudApiClient {
     private final WhatsAppConfig config;
     private final RestTemplate restTemplate = new RestTemplate();
     private String cachedLogoMediaId;
+    private String cachedVideoMediaId;
 
     public void sendText(String to, String text) {
         String normalized = normalizePhone(to);
@@ -243,6 +244,52 @@ public class WhatsAppCloudApiClient {
         }
         cachedLogoMediaId = uploadMedia(config.getLogoPath(), "image/jpeg");
         return cachedLogoMediaId;
+    }
+
+    public String getVideoMediaId() {
+        if (cachedVideoMediaId != null) {
+            return cachedVideoMediaId;
+        }
+        cachedVideoMediaId = uploadMedia(config.getVideoPath(), "video/mp4");
+        return cachedVideoMediaId;
+    }
+
+    public void sendVideo(String to, String caption) {
+        String normalized = normalizePhone(to);
+        if (normalized == null) {
+            log.error("Número inválido: {}", to);
+            return;
+        }
+
+        String mediaId = getVideoMediaId();
+        if (mediaId == null) {
+            log.error("No se pudo obtener mediaId del video");
+            return;
+        }
+
+        Map<String, Object> message = new HashMap<>();
+        message.put("messaging_product", "whatsapp");
+        message.put("to", normalized);
+        message.put("type", "video");
+        message.put("video", Map.of(
+                "id", mediaId,
+                "caption", caption
+        ));
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(config.getAccessToken());
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        try {
+            restTemplate.postForEntity(
+                    config.getMessagesUrl(),
+                    new HttpEntity<>(message, headers),
+                    String.class
+            );
+            log.info("Video enviado a {}", normalized);
+        } catch (Exception e) {
+            log.error("Error enviando video a " + normalized, e);
+        }
     }
 
     // En WhatsAppCloudApiClient.java - modifica uploadMedia
