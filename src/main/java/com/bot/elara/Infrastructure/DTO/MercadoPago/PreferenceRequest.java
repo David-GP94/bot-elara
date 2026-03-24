@@ -122,12 +122,27 @@ public class PreferenceRequest {
     @AllArgsConstructor
     public static class PaymentMethods {
         @JsonProperty("excluded_payment_types")
-        private List<String> excludedPaymentTypes;
+        private List<ExcludedPaymentType> excludedPaymentTypes;
 
         @JsonProperty("excluded_payment_methods")
-        private List<String> excludedPaymentMethods;
+        private List<ExcludedPaymentMethod> excludedPaymentMethods;
 
         @JsonProperty("installments")
         private Integer installments;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ExcludedPaymentType {
+        @JsonProperty("id")
+        private String id;
+    }
+
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ExcludedPaymentMethod {
+        @JsonProperty("id")
+        private String id;
     }
 }
