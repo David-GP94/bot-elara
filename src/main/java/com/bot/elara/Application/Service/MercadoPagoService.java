@@ -4,6 +4,7 @@ import com.bot.elara.Infrastructure.DTO.MercadoPago.PaymentLinkResult;
 import com.bot.elara.Infrastructure.DTO.MercadoPago.PreferenceRequest;
 import com.bot.elara.Infrastructure.DTO.MercadoPago.PreferenceResponse;
 import com.bot.elara.Infrastructure.DTO.MercadoPago.PaymentResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -152,10 +153,19 @@ public class MercadoPagoService {
             metadata.put("channel", "whatsapp_bot");
             preference.setMetadata(metadata);
 
-            // 🔹 Métodos de pago y Binary Mode (Igual a Django)
+
             PreferenceRequest.PaymentMethods paymentMethods =
                     new PreferenceRequest.PaymentMethods();
-            paymentMethods.setInstallments(1); // Forzar 1 pago para evitar errores en Sandbox
+
+
+            paymentMethods.setInstallments(1);
+
+            // 🔹 EXCLUIR SOLO SPEI (transferencias)
+            paymentMethods.setExcludedPaymentTypes(List.of(
+                    new PreferenceRequest.ExcludedPaymentType("atm")
+            ));
+
+
             preference.setPaymentMethods(paymentMethods);
 
             // Nota: Asegúrate de tener el atributo 'binaryMode' y su setter en tu clase PreferenceRequest (DTO)
@@ -174,6 +184,12 @@ public class MercadoPagoService {
                     new HttpEntity<>(preference, headers);
 
             String url = apiUrl + "/checkout/preferences";
+
+            try {
+                log.info("MP Request: {}", new ObjectMapper().writeValueAsString(preference));
+            } catch (Exception e) {
+                log.error("Error serializando request MP", e);
+            }
 
             log.info("📤 Creando preferencia MP → Consulta: {}, Usuario: {}, Monto: {} {}",
                     consultaId, whatsappId, precioFinal, currency);
@@ -196,9 +212,7 @@ public class MercadoPagoService {
                     return null;
                 }
 
-                String paymentUrl = isTestMode()
-                        ? body.getSandboxInitPoint()
-                        : body.getInitPoint();
+                String paymentUrl = body.getInitPoint();
 
                 if (paymentUrl == null || paymentUrl.isBlank()) {
                     log.error("❌ URL de pago no generada");
