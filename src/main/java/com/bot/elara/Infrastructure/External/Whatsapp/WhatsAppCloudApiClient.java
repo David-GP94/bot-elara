@@ -381,26 +381,47 @@ public class WhatsAppCloudApiClient {
         String trimmed = phone.trim();
         if (trimmed.isEmpty()) return null;
 
-        // Remueve todo lo que no sea dígito
+        // 1. Remueve todo lo que no sea dígito
         String cleaned = trimmed.replaceAll("[^0-9]", "");
 
-        // Convierte prefijo internacional 00xxxx -> xxxx
+        // 2. Convierte prefijo internacional 00xxxx -> xxxx
         if (cleaned.startsWith("00")) {
             cleaned = cleaned.substring(2);
         }
 
-        // Si tiene 10 dígitos asumimos México (52)
-        if (cleaned.length() == 10) {
+        // --- REGLAS ESPECÍFICAS DE PAÍSES PARA WHATSAPP ---
+
+        // 3A. Argentina: Quitar el '9' intermedio generado por WhatsApp (549 -> 54)
+        if (cleaned.startsWith("549") && cleaned.length() == 13) {
+            cleaned = "54" + cleaned.substring(3);
+        }
+
+        // 3B. México: Quitar el '1' intermedio antiguo (521 -> 52)
+        else if (cleaned.startsWith("521") && cleaned.length() == 13) {
+            cleaned = "52" + cleaned.substring(3);
+        }
+
+        // 3C. UK (Reino Unido): Quitar el '0' troncal si el cliente lo escribió por error (+44 0 75... -> 44 75...)
+        else if (cleaned.startsWith("440")) {
+            cleaned = "44" + cleaned.substring(3);
+        }
+
+        // 4. México Default
+        // Si vienen 10 dígitos cerrados, asumimos que es México (+52)
+        else if (cleaned.length() == 10) {
             cleaned = "52" + cleaned;
         }
 
-        // Rechazar si fuera demasiado corto o largo
+        // --- VALIDACIÓN FINAL ---
+
+        // Rechazar si es demasiado corto o largo
         if (cleaned.length() < 11 || cleaned.length() > 15) {
             return null;
         }
 
         return "+" + cleaned; // formato E.164
     }
+
     /**
      * Envía un mensaje con botón grande azul (CTA URL) - ideal para pagos con Stripe
      */

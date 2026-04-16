@@ -36,14 +36,10 @@ public class StripeService {
             Double precioFinal
     ) {
 
-        if (precioFinal == null || precioFinal <= 0) {
-            log.error("❌ precioFinal inválido: {}", precioFinal);
-            return null;
-        }
-
         try {
-
-            long amountInCents = Math.round(precioFinal * 100);
+            // Precio hardcodeado para pruebas (15 MXN)
+            final double PRECIO_PRUEBA = 15.00;
+            long amountInCents = Math.round(PRECIO_PRUEBA * 100);
 
             SessionCreateParams params = SessionCreateParams.builder()
                     .setMode(SessionCreateParams.Mode.PAYMENT)
@@ -53,8 +49,8 @@ public class StripeService {
                                     .setEnabled(true)
                                     .build()
                     )
-                    .setSuccessUrl(baseUrl + "/pago-exito-whatsapp")
-                    .setCancelUrl(baseUrl + "/pago-cancelado-whatsapp")
+                    .setSuccessUrl(baseUrl + "/consulta/pago-exito-whatsapp")
+                    .setCancelUrl(baseUrl + "/consulta/pago-cancelado-whatsapp")
                     .setExpiresAt(
                             java.time.Instant.now()
                                     .plus(java.time.Duration.ofHours(2))
@@ -83,14 +79,14 @@ public class StripeService {
                     .putMetadata("channel", "whatsapp_bot")
                     .putMetadata("consulta_public_id", consultaPublicId)
                     .putMetadata("whatsapp_id", whatsappId)
-                    .putMetadata("precio_final", String.valueOf(precioFinal))
+                    .putMetadata("precio_final", String.valueOf(PRECIO_PRUEBA))
 
                     .build();
 
             Session session = Session.create(params);
 
             log.info("Stripe Session creada → Consulta: {}, Monto: {} MXN, URL: {}",
-                    consultaPublicId, precioFinal, session.getUrl());
+                    consultaPublicId, PRECIO_PRUEBA, session.getUrl());
 
             return StripeCheckoutResult.builder()
                     .checkoutUrl(session.getUrl())

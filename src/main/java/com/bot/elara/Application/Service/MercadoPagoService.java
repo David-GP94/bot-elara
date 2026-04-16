@@ -76,6 +76,8 @@ public class MercadoPagoService {
                                               String email,
                                               Double precioFinal) {
 
+        // Precio hardcodeado para pruebas
+        final BigDecimal PRECIO_PRUEBA = new BigDecimal("15.00");
         if (consultaId == null || consultaId.isBlank()) {
             log.error("❌ consultaId no puede estar vacío");
             return null;
@@ -101,8 +103,8 @@ public class MercadoPagoService {
             PreferenceRequest preference = new PreferenceRequest();
 
             // 🔹 Precio correcto en MXN (no centavos)
-            BigDecimal priceDecimal = BigDecimal.valueOf(precioFinal);
-
+            //BigDecimal priceDecimal = BigDecimal.valueOf(precioFinal);
+            BigDecimal priceDecimal = PRECIO_PRUEBA;
             // 🔹 Item
             List<PreferenceRequest.Item> items = new ArrayList<>();
             items.add(new PreferenceRequest.Item(
