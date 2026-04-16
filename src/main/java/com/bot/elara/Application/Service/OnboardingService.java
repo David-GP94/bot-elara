@@ -1225,12 +1225,14 @@ public class OnboardingService {
                 precioFinal
         );
 
+
+
         if (result == null) {
             sendText(p.getWhatsappId(),
                     "⚠️ Hubo un problema generando el pago. Intenta más tarde.");
             return;
         }
-
+        log.info("PaymentIntentId: {}", result.getPaymentIntentId());
         AttachStripeSessionRequest attachRequest = new AttachStripeSessionRequest();
         attachRequest.setConsulta_id(session.getConsultaId());
         attachRequest.setStripe_session_id(result.getSessionId());
@@ -1948,10 +1950,10 @@ public class OnboardingService {
     }
 
     private static final Map<String, String> MOTIVO_MAP = Map.of(
-            "Acné", "acne",
-            "Caída de pelo", "cabello",
+            "Acne", "acne",
+            "Caida de Pelo", "cabello",
             "Anti-edad", "antiedad_skincare",
-            "Rosácea", "rosacea",
+            "Rosacea", "rosacea",
             "Manchas", "manchas",
             "Dermatitis", "dermatitis",
             "Otros", "otros"
