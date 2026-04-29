@@ -1423,12 +1423,7 @@ public class OnboardingService {
      * Envía mensaje de texto simple
      */
     private void sendText(String to, String text) {
-        // Asegura formato internacional (México)
-        String phone = to;
-        if (!phone.startsWith("52") && !phone.startsWith("1")) {
-            phone = "521" + phone.replaceFirst("^0+", "");
-        }
-
+        String phone = normalize(to);
         whatsAppClient.sendText(phone, text);
     }
 
@@ -1436,11 +1431,8 @@ public class OnboardingService {
      * Envía un documento (PDF) usando WhatsApp Cloud API
      */
     private void sendDocument(String to, String documentUrl, String filename) {
-        String phone = to;
-        if (!phone.startsWith("52") && !phone.startsWith("1")) {
-            phone = "521" + phone.replaceFirst("^0+", "");
-        }
-
+        // Asegura formato usando nuestro método corregido
+        String phone = normalize(to);
         whatsAppClient.sendDocument(phone, documentUrl, filename, phone);
     }
 
@@ -1456,7 +1448,7 @@ public class OnboardingService {
      * Crea o recupera el paciente por número de WhatsApp
      */
     private Patient getOrCreatePatient(String whatsappId) {
-        String normalized = whatsappId.replaceFirst("^521?", "521");
+        String normalized = normalize(whatsappId);
 
         return patientRepository.findByWhatsappId(normalized)
                 .orElseGet(() -> {
@@ -1813,7 +1805,6 @@ public class OnboardingService {
     }
 
     private String normalize(String phone) {
-
         if (phone == null || phone.isBlank()) {
             return phone;
         }
@@ -1824,12 +1815,18 @@ public class OnboardingService {
         }
 
         // Si viene con 52 pero no 521
-        if (phone.startsWith("52")) {
+        if (phone.startsWith("52") && phone.length() <= 12) {
             return "521" + phone.substring(2);
         }
 
-        // Si viene sin prefijo internacional
-        return "521" + phone.replaceFirst("^0+", "");
+        // Si viene sin prefijo internacional (asumimos 10 dígitos de México)
+        if (phone.replaceFirst("^0+", "").length() == 10) {
+            return "521" + phone.replaceFirst("^0+", "");
+        }
+
+        // Si es de otro país (ej. 549 de Argentina) pasa intacto para que
+        // WhatsAppCloudApiClient se encargue de normalizarlo correctamente.
+        return phone;
     }
 
     private void crearConsultaEnDjango(BotSession session, Patient p) {
