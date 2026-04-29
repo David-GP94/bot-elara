@@ -35,11 +35,13 @@ public class StripeService {
             String email,
             Double precioFinal
     ) {
+        if (precioFinal == null || precioFinal <= 0) {
+            log.error("❌ precioFinal inválido: {}", precioFinal);
+            return null;
+        }
 
         try {
-            // Precio hardcodeado para pruebas (15 MXN)
-            final double PRECIO_PRUEBA = 15.00;
-            long amountInCents = Math.round(PRECIO_PRUEBA * 100);
+            long amountInCents = Math.round(precioFinal * 100);
 
             SessionCreateParams params = SessionCreateParams.builder()
                     .setMode(SessionCreateParams.Mode.PAYMENT)
@@ -79,14 +81,14 @@ public class StripeService {
                     .putMetadata("channel", "whatsapp_bot")
                     .putMetadata("consulta_public_id", consultaPublicId)
                     .putMetadata("whatsapp_id", whatsappId)
-                    .putMetadata("precio_final", String.valueOf(PRECIO_PRUEBA))
+                    .putMetadata("precio_final", String.valueOf(precioFinal))
 
                     .build();
 
             Session session = Session.create(params);
 
             log.info("Stripe Session creada → Consulta: {}, Monto: {} MXN, URL: {}",
-                    consultaPublicId, PRECIO_PRUEBA, session.getUrl());
+                    consultaPublicId, precioFinal, session.getUrl());
 
             return StripeCheckoutResult.builder()
                     .checkoutUrl(session.getUrl())
