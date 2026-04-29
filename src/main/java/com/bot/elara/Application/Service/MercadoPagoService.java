@@ -76,8 +76,6 @@ public class MercadoPagoService {
                                               String email,
                                               Double precioFinal) {
 
-        // Precio hardcodeado para pruebas
-        final BigDecimal PRECIO_PRUEBA = new BigDecimal("15.00");
         if (consultaId == null || consultaId.isBlank()) {
             log.error("❌ consultaId no puede estar vacío");
             return null;
@@ -103,8 +101,7 @@ public class MercadoPagoService {
             PreferenceRequest preference = new PreferenceRequest();
 
             // 🔹 Precio correcto en MXN (no centavos)
-            //BigDecimal priceDecimal = BigDecimal.valueOf(precioFinal);
-            BigDecimal priceDecimal = PRECIO_PRUEBA;
+            BigDecimal priceDecimal = BigDecimal.valueOf(precioFinal);
             // 🔹 Item
             List<PreferenceRequest.Item> items = new ArrayList<>();
             items.add(new PreferenceRequest.Item(
@@ -132,9 +129,9 @@ public class MercadoPagoService {
 
             // 🔹 URLs
             PreferenceRequest.BackUrls backUrls = new PreferenceRequest.BackUrls(
-                    baseUrl + "/consulta/mercadopago/success/",
-                    baseUrl + "/consulta/mercadopago/failure/",
-                    baseUrl + "/consulta/mercadopago/pending/"
+                    baseUrl + "/consulta/pago-exito-whatsapp",      // Éxito (Igual que Stripe)
+                    baseUrl + "/consulta/pago-cancelado-whatsapp",  // Fallo/Cancelado (Igual que Stripe)
+                    baseUrl + "/consulta/pago-cancelado-whatsapp"   // Pendiente (Puedes enviarlo a cancelado o a una vista de pendiente)
             );
 
             preference.setBackUrls(backUrls);
@@ -145,7 +142,7 @@ public class MercadoPagoService {
             String externalReference = consultaId;
 
             preference.setExternalReference(externalReference);
-            preference.setStatementDescriptor("ELARA DERMATO");
+            preference.setStatementDescriptor("ELARA CONSULTA");
 
             // 🔹 Metadata
             Map<String, Object> metadata = new HashMap<>();
@@ -162,9 +159,9 @@ public class MercadoPagoService {
 
             paymentMethods.setInstallments(1);
 
-            // 🔹 EXCLUIR SOLO SPEI (transferencias)
+            // EXCLUIR SOLO SPEI (transferencias)
             paymentMethods.setExcludedPaymentTypes(List.of(
-                    new PreferenceRequest.ExcludedPaymentType("atm")
+                    new PreferenceRequest.ExcludedPaymentType("bank_transfer")
             ));
 
 
